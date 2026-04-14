@@ -295,12 +295,20 @@ export default function Prospecter() {
     }, 1800)
 
     try {
+      console.log('[Prospecter] Lancement recherche', { zone, targetType, maxResults, filters: activeFilters })
+
       const leads = await searchLeads({
         zone: zone.trim(),
         targetType,
         maxResults,
         filters: activeFilters,
       })
+
+      console.log('[Prospecter] Leads reçus de l\'API :', leads.length, leads)
+
+      if (leads.length === 0) {
+        console.warn('[Prospecter] L\'API a renvoyé 0 résultats')
+      }
 
       const enriched: SearchLead[] = leads.map((l, i) => ({
         ...l,
@@ -309,7 +317,12 @@ export default function Prospecter() {
         _revealed: false,
       }))
 
-      // Save to Supabase
+      console.log('[Prospecter] Enriched leads prêts pour affichage :', enriched.length)
+
+      // ── Afficher les résultats immédiatement, indépendamment du save ──
+      setResults(enriched)
+
+      // ── Sauvegarder en Supabase en arrière-plan (erreur non bloquante) ──
       if (profile?.id && enriched.length > 0) {
         const toInsert = enriched.map(({ _tmpId, _revealed, ...lead }) => ({
           ...lead,
@@ -319,12 +332,17 @@ export default function Prospecter() {
           phone_revealed: false,
           photos: [],
         }))
-        await supabase.from('leads').insert(toInsert)
-        queryClient.invalidateQueries({ queryKey: ['leads', profile.id] })
+        supabase.from('leads').insert(toInsert).then(({ error: dbErr }) => {
+          if (dbErr) {
+            console.warn('[Prospecter] Supabase insert échoué (résultats affichés quand même) :', dbErr.message)
+          } else {
+            console.log('[Prospecter] Leads sauvegardés en base')
+            queryClient.invalidateQueries({ queryKey: ['leads', profile.id] })
+          }
+        })
       }
-
-      setResults(enriched)
     } catch (e: any) {
+      console.error('[Prospecter] Erreur handleSearch :', e)
       setError(e.message || 'Erreur lors de la recherche. Vérifie ta connexion.')
     } finally {
       clearInterval(stepTimer)

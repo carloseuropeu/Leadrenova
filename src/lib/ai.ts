@@ -65,6 +65,7 @@ Réponds UNIQUEMENT en JSON: {"subject":"...","body":"..."}`,
     })
   })
 
+  if (!res.ok) throw new Error(`API error ${res.status}`)
   const data = await res.json()
   const text = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') || ''
   try {
@@ -88,6 +89,7 @@ Réponds UNIQUEMENT en JSON: {"lignes":[{"description":"","quantite":1,"unite":"
     })
   })
 
+  if (!res.ok) throw new Error(`API error ${res.status}`)
   const data = await res.json()
   const text = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') || ''
   try { return JSON.parse(text.replace(/```json|```/g, '').trim()) }

@@ -3,7 +3,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.VITE_ANTHROPIC_API_KEY;
+  // Bug corrigé : VITE_* n'existe pas côté serveur Vercel — utiliser ANTHROPIC_API_KEY
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!apiKey) {
+    console.error('[api/prospect] ANTHROPIC_API_KEY manquante dans les variables d\'environnement Vercel');
+    return res.status(500).json({ error: 'Configuration serveur manquante : clé API introuvable.' });
+  }
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -17,8 +23,19 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
-    res.status(200).json(data);
+
+    // Bug corrigé : propager le vrai statut HTTP plutôt que toujours 200
+    // (une 401 Anthropic masquée en 200 faisait croire à un succès)
+    if (!response.ok) {
+      console.error('[api/prospect] Erreur Anthropic', response.status, data);
+      return res.status(response.status).json({
+        error: data?.error?.message || `Anthropic API error ${response.status}`
+      });
+    }
+
+    return res.status(200).json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[api/prospect] Exception réseau :', error.message);
+    return res.status(500).json({ error: error.message });
   }
 }

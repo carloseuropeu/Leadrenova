@@ -1,6 +1,6 @@
 import type { Lead } from '@/lib/supabase'
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages'
+const ANTHROPIC_API = '/api/prospect'
 const MODEL = 'claude-sonnet-4-20250514'
 
 // ── PROSPECTION ─────────────────────────────────────────────────

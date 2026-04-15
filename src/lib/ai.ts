@@ -23,13 +23,8 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1000,
+      max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
-      mcp_servers: [{
-        type: 'url',
-        url: 'https://www.vibeprospecting.ai/product/claude',
-        name: 'vibe-prospecting'
-      }]
     })
   })
 

@@ -7,7 +7,7 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import { usePlan } from '@/hooks/usePlan'
 import { supabase } from '@/lib/supabase'
-import { searchLeads, generateEmail } from '@/lib/ai'
+import { searchLeads, generateEmail, sendEmail } from '@/lib/ai'
 import type { Lead } from '@/lib/supabase'
 
 // ── Config ───────────────────────────────────────────────────────
@@ -57,6 +57,9 @@ function EmailModal({
   const [body, setBody]       = useState('')
   const [loading, setLoading] = useState(false)
   const [copied, setCopied]   = useState(false)
+  const [sending, setSending] = useState(false)
+  const [sentTo, setSentTo]   = useState('')
+  const [sendError, setSendError] = useState('')
 
   const generate = async () => {
     if (!profile) return
@@ -81,6 +84,25 @@ function EmailModal({
     await navigator.clipboard.writeText(`Objet : ${subject}\n\n${body}`)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleSend = async () => {
+    if (!lead.email || !subject || !body) return
+    setSending(true)
+    setSendError('')
+    try {
+      await sendEmail({
+        to: lead.email,
+        subject,
+        body,
+        fromName: profile?.full_name,
+      })
+      setSentTo(lead.email)
+    } catch (e: any) {
+      setSendError(e.message || "Erreur lors de l'envoi.")
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -148,11 +170,37 @@ function EmailModal({
                 </button>
                 <button
                   onClick={copyAll}
-                  className="flex-1 bg-green text-bg font-bold text-xs py-2.5 rounded-xl hover:bg-green2 transition-colors"
+                  className="flex-1 bg-bg3 border border-border text-text2 text-xs font-mono py-2.5 rounded-xl hover:border-border2 transition-colors"
                 >
-                  {copied ? '✓ Copié !' : 'Copier l\'email'}
+                  {copied ? '✓ Copié !' : 'Copier'}
                 </button>
               </div>
+
+              {sendError && (
+                <p className="text-xs text-red bg-rdim border border-red/20 rounded-xl px-3 py-2">
+                  {sendError}
+                </p>
+              )}
+
+              {sentTo ? (
+                <div className="flex items-center justify-center gap-2 py-2.5 text-green text-sm font-bold">
+                  <CheckCircle size={16} /> Email envoyé à {sentTo}
+                </div>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={sending || !lead.email}
+                  className="w-full bg-green text-bg font-bold text-sm py-3 rounded-xl hover:bg-green2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {sending ? (
+                    <><Loader2 size={15} className="animate-spin" /> Envoi en cours...</>
+                  ) : !lead.email ? (
+                    <><Mail size={15} /> Email inconnu</>
+                  ) : (
+                    <><Mail size={15} /> Envoyer l'email</>
+                  )}
+                </button>
+              )}
             </>
           )}
         </div>

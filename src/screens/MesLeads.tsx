@@ -2,10 +2,11 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Search, X, Phone, Mail, Globe, MapPin,
-  Calendar, ChevronRight, Eye, Check
+  Calendar, ChevronRight, Eye, Check, Loader2, Zap, CheckCircle
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { supabase } from '@/lib/supabase'
+import { generateEmail, sendEmail } from '@/lib/ai'
 import type { Lead, LeadStatus } from '@/lib/supabase'
 
 // ── Status pipeline ──────────────────────────────────────────────
@@ -54,13 +55,62 @@ function LeadModal({ lead, onClose, onStatusChange }: {
   onClose: () => void
   onStatusChange: (id: string, status: LeadStatus) => void
 }) {
-  const [notes, setNotes] = useState(lead.notes ?? '')
-  const [saving, setSaving] = useState(false)
+  const { profile } = useAuthStore()
+  const [notes, setNotes]           = useState(lead.notes ?? '')
+  const [saving, setSaving]         = useState(false)
+  const [emailSubject, setEmailSubject] = useState('')
+  const [emailBody, setEmailBody]       = useState('')
+  const [genLoading, setGenLoading]     = useState(false)
+  const [sending, setSending]           = useState(false)
+  const [sentTo, setSentTo]             = useState('')
+  const [emailError, setEmailError]     = useState('')
 
   const saveNotes = async () => {
     setSaving(true)
     await supabase.from('leads').update({ notes }).eq('id', lead.id)
     setSaving(false)
+  }
+
+  const handleGenerate = async () => {
+    if (!profile) return
+    setGenLoading(true)
+    setEmailError('')
+    try {
+      const result = await generateEmail(lead, {
+        full_name: profile.full_name,
+        metiers: profile.metiers,
+        zone_principale: profile.zone_principale,
+      })
+      setEmailSubject(result.subject)
+      setEmailBody(result.body)
+    } catch (e: any) {
+      setEmailError(e.message || "Erreur de génération.")
+    } finally {
+      setGenLoading(false)
+    }
+  }
+
+  const handleSend = async () => {
+    if (!lead.email || !emailSubject || !emailBody) return
+    setSending(true)
+    setEmailError('')
+    try {
+      await sendEmail({
+        to: lead.email,
+        subject: emailSubject,
+        body: emailBody,
+        fromName: profile?.full_name,
+      })
+      setSentTo(lead.email)
+      await supabase.from('leads')
+        .update({ status: 'contacte', last_contact_at: new Date().toISOString() })
+        .eq('id', lead.id)
+      onStatusChange(lead.id, 'contacte')
+    } catch (e: any) {
+      setEmailError(e.message || "Erreur lors de l'envoi.")
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -225,6 +275,84 @@ function LeadModal({ lead, onClose, onStatusChange }: {
               <p className="text-xs text-text3 font-mono mt-1">Sauvegarde...</p>
             )}
           </div>
+
+          {/* Email IA — visible uniquement si email révélé */}
+          {lead.email_revealed && lead.email && (
+            <div>
+              <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-2">Email IA</p>
+              <div className="bg-bg3 border border-border rounded-xl p-4 space-y-3">
+                <p className="text-xs text-text2">
+                  <span className="text-text3">Destinataire :</span>{' '}
+                  <span className="font-mono text-green">{lead.email}</span>
+                </p>
+
+                {!emailSubject && !genLoading && (
+                  <button
+                    onClick={handleGenerate}
+                    className="w-full flex items-center justify-center gap-2 bg-bg text-text2 border border-border text-xs font-mono py-2.5 rounded-xl hover:border-border2 transition-colors"
+                  >
+                    <Zap size={13} className="text-green" /> Générer avec IA
+                  </button>
+                )}
+
+                {genLoading && (
+                  <div className="flex items-center justify-center gap-2 py-3">
+                    <Loader2 size={15} className="animate-spin text-green" />
+                    <span className="text-xs text-text2">Rédaction en cours...</span>
+                  </div>
+                )}
+
+                {emailSubject && !genLoading && (
+                  <>
+                    <input
+                      value={emailSubject}
+                      onChange={e => setEmailSubject(e.target.value)}
+                      className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs text-text outline-none focus:border-green/50"
+                      placeholder="Objet"
+                    />
+                    <textarea
+                      value={emailBody}
+                      onChange={e => setEmailBody(e.target.value)}
+                      rows={6}
+                      className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs text-text outline-none focus:border-green/50 resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleGenerate}
+                        className="flex-1 text-xs font-mono text-text2 border border-border bg-bg rounded-xl py-2 hover:border-border2 transition-colors"
+                      >
+                        Régénérer
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {emailError && (
+                  <p className="text-xs text-red bg-rdim border border-red/20 rounded-xl px-3 py-2">
+                    {emailError}
+                  </p>
+                )}
+
+                {sentTo ? (
+                  <div className="flex items-center justify-center gap-2 py-2 text-green text-xs font-bold">
+                    <CheckCircle size={14} /> Email envoyé · Statut mis à jour → Contacté
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleSend}
+                    disabled={sending || !emailSubject || !emailBody}
+                    className="w-full bg-green text-bg font-bold text-sm py-3 rounded-xl hover:bg-green2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {sending ? (
+                      <><Loader2 size={15} className="animate-spin" /> Envoi...</>
+                    ) : (
+                      <><Mail size={15} /> Envoyer l'email</>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

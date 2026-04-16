@@ -70,6 +70,25 @@ Réponds UNIQUEMENT en JSON: {"subject":"...","body":"..."}`,
   }
 }
 
+// ── SEND EMAIL (Resend) ─────────────────────────────────────────
+export async function sendEmail(params: {
+  to: string
+  subject: string
+  body: string
+  fromName?: string
+}): Promise<{ id: string }> {
+  const res = await fetch('/api/send-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) {
+    const data = await res.json()
+    throw new Error(data.error || `Send error ${res.status}`)
+  }
+  return res.json()
+}
+
 // ── DEVIS IA (Business plan) ─────────────────────────────────────
 export async function generateDevis(lead: Partial<Lead>, notes: string): Promise<any> {
   const res = await fetch(ANTHROPIC_API, {

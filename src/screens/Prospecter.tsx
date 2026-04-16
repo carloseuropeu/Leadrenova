@@ -312,7 +312,7 @@ function LeadCard({
 type SearchLead = Partial<Lead> & { _revealed?: boolean; _tmpId: string }
 
 export default function Prospecter() {
-  const { profile } = useAuthStore()
+  const { profile, updateProfile } = useAuthStore()
   const { hasAccess, canRevealEmail, creditsRemaining } = usePlan()
   const queryClient = useQueryClient()
 
@@ -326,6 +326,7 @@ export default function Prospecter() {
   const [loading, setLoading]   = useState(false)
   const [loadStep, setLoadStep] = useState(0)
   const [error, setError]       = useState('')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [emailModal, setEmailModal] = useState<SearchLead | null>(null)
 
   const toggleFilter = (f: string) =>
@@ -333,8 +334,10 @@ export default function Prospecter() {
 
   const handleSearch = async () => {
     if (!zone.trim()) { setError('Indique une zone de recherche'); return }
+    if (creditsRemaining <= 0) { setError('Crédits épuisés. Passe au plan supérieur pour continuer.'); return }
     setError('')
     setResults([])
+    setSaveStatus('idle')
     setLoading(true)
     setLoadStep(0)
 
@@ -370,21 +373,41 @@ export default function Prospecter() {
       // ── Afficher les résultats immédiatement, indépendamment du save ──
       setResults(enriched)
 
+      // ── Décrémenter 1 crédit après chaque recherche réussie ──
+      if (enriched.length > 0) {
+        updateProfile({ credits_remaining: Math.max(0, creditsRemaining - 1) })
+          .catch(e => console.warn('[Prospecter] Erreur mise à jour crédits :', e))
+      }
+
       // ── Sauvegarder en Supabase en arrière-plan (erreur non bloquante) ──
       if (profile?.id && enriched.length > 0) {
-        const toInsert = enriched.map(({ _tmpId, _revealed, ...lead }) => ({
-          ...lead,
-          user_id: profile.id,
-          status: 'nouveau',
-          email_revealed: false,
-          phone_revealed: false,
-          photos: [],
+        const toInsert = enriched.map(l => ({
+          user_id:          profile.id,
+          company:          l.company          ?? '',
+          type:             l.type             ?? '',
+          contact_name:     l.contact_name     ?? null,
+          contact_role:     l.contact_role     ?? null,
+          email:            l.email            ?? null,
+          phone:            l.phone            ?? null,
+          website:          l.website          ?? null,
+          address:          l.address          ?? '',
+          city:             l.city             ?? '',
+          employees:        l.employees        ?? null,
+          renovation_score: l.renovation_score ?? 0,
+          opportunity:      l.opportunity      ?? null,
+          priority:         l.priority         ?? false,
+          status:           'nouveau' as const,
+          email_revealed:   false,
+          phone_revealed:   false,
+          photos:           [],
         }))
         supabase.from('leads').insert(toInsert).then(({ error: dbErr }) => {
           if (dbErr) {
-            console.warn('[Prospecter] Supabase insert échoué (résultats affichés quand même) :', dbErr.message)
+            console.warn('[Prospecter] Supabase insert échoué :', dbErr.message)
+            setSaveStatus('error')
           } else {
             console.log('[Prospecter] Leads sauvegardés en base')
+            setSaveStatus('saved')
             queryClient.invalidateQueries({ queryKey: ['leads', profile.id] })
           }
         })
@@ -403,10 +426,7 @@ export default function Prospecter() {
     setResults(prev => prev.map(l =>
       l._tmpId === tmpId ? { ...l, _revealed: true } : l
     ))
-    await supabase
-      .from('profiles')
-      .update({ credits_remaining: creditsRemaining - 1 })
-      .eq('id', profile.id)
+    await updateProfile({ credits_remaining: Math.max(0, creditsRemaining - 1) })
   }
 
   const exportCSV = () => {
@@ -573,6 +593,20 @@ export default function Prospecter() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Save status */}
+      {saveStatus === 'saved' && (
+        <div className="flex items-center gap-2 text-xs text-green bg-gdim border border-green/20 rounded-xl px-4 py-2.5 mb-3">
+          <CheckCircle size={13} />
+          Leads sauvegardés — visibles dans Mes leads
+        </div>
+      )}
+      {saveStatus === 'error' && (
+        <div className="flex items-center gap-2 text-xs text-amber bg-adim border border-amber/20 rounded-xl px-4 py-2.5 mb-3">
+          <AlertCircle size={13} />
+          Résultats affichés mais non sauvegardés (vérifier la connexion Supabase)
         </div>
       )}
 

@@ -365,13 +365,14 @@ export default function MesLeads() {
   const queryClient = useQueryClient()
 
   const [search, setSearch]         = useState('')
-  const [activeTab, setActiveTab]   = useState<LeadStatus | 'all'>('all')
+  const [activeTab, setActiveTab]   = useState<LeadStatus | 'all'>('nouveau')
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
 
   const { data: leads = [], isLoading } = useQuery<Lead[]>({
     queryKey: ['leads', profile?.id],
     enabled: !!profile?.id,
-    staleTime: 30_000,
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { data } = await supabase
         .from('leads')

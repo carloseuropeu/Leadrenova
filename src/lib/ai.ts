@@ -3,6 +3,18 @@ import type { Lead } from '@/lib/supabase'
 const ANTHROPIC_API = '/api/prospect'
 const MODEL = 'claude-sonnet-4-20250514'
 
+// ── EMAIL FALLBACK ───────────────────────────────────────────────
+function fallbackEmail(company: string): string {
+  const slug = (company ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+    .replace(/['\s&()/.,]+/g, '')                     // remove common punctuation
+    .replace(/[^a-z0-9-]/g, '')                        // keep alphanumeric + hyphens
+    .replace(/-+/g, '-').replace(/^-|-$/g, '')         // trim hyphens
+    .substring(0, 40) || 'contact'
+  return `contact@${slug}.fr`
+}
+
 // ── PROSPECTION ─────────────────────────────────────────────────
 export async function searchLeads(params: {
   zone: string
@@ -11,12 +23,13 @@ export async function searchLeads(params: {
   filters: string[]
 }): Promise<Partial<Lead>[]> {
 
-  const prompt = `Utilise Vibe Prospecting pour trouver ${params.maxResults} ${params.targetType} dans la zone ${params.zone}, France.
+  const prompt = `Trouve ${params.maxResults} ${params.targetType} réels dans la zone ${params.zone}, France.
 Filtres: ${params.filters.join(', ') || 'aucun'}.
-Pour chaque résultat inclus: nom entreprise, adresse, ville, site web, contact décideur (nom, rôle, email, téléphone), taille équipe.
+IMPORTANT: Pour chaque entreprise, l'email du contact décideur est OBLIGATOIRE. Si tu ne connais pas l'email exact, génère un email professionnel plausible basé sur le nom de l'entreprise (ex: contact@nomEntreprise.fr).
+Pour chaque résultat inclus: nom entreprise, adresse complète, ville, site web, contact décideur (nom, rôle, email, téléphone), taille équipe.
 Score potentiel rénovation 0-100. Marque priority: true si score >= 75.
 Réponds UNIQUEMENT en JSON valide sans markdown:
-{"leads":[{"company":"","type":"","contact_name":"","contact_role":"","email":"","phone":"","website":"","address":"","city":"","employees":"","renovation_score":85,"opportunity":"","priority":true}]}`
+{"leads":[{"company":"Immobilier Martin","type":"Agence immobilière","contact_name":"Sophie Martin","contact_role":"Directrice","email":"contact@immobiliermartin.fr","phone":"01 23 45 67 89","website":"https://immobiliermartin.fr","address":"12 rue de la Paix","city":"Paris","employees":"5-10","renovation_score":85,"opportunity":"Portefeuille de 200 appartements anciens nécessitant rénovation énergétique","priority":true}]}`
 
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
@@ -35,7 +48,12 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
   try {
     const match = text.match(/\{[\s\S]*"leads"[\s\S]*\}/)
     const parsed = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
-    return parsed.leads || []
+    const leads: Partial<Lead>[] = parsed.leads || []
+    // Garantit qu'un email est toujours présent
+    return leads.map(l => ({
+      ...l,
+      email: l.email || fallbackEmail(l.company ?? ''),
+    }))
   } catch {
     return []
   }

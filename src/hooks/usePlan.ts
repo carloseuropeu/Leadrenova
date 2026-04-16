@@ -26,20 +26,26 @@ const PLAN_FEATURES = {
 
 export type Feature = keyof typeof PLAN_FEATURES
 
+const ADMIN_EMAILS = ['mmotivacao36@gmail.com']
+
 export function usePlan() {
   const { profile } = useAuthStore()
   const plan: UserPlan = profile?.plan ?? 'trial'
 
+  const isAdmin = ADMIN_EMAILS.includes(profile?.email ?? '')
+
   // Check if trial has expired
-  const isTrialExpired = plan === 'trial' &&
+  const isTrialExpired = !isAdmin && plan === 'trial' &&
     profile?.trial_ends_at ? new Date(profile.trial_ends_at) < new Date() : false
 
   const hasAccess = (feature: Feature): boolean => {
+    if (isAdmin) return true
     if (isTrialExpired && plan === 'trial') return false
     return (PLAN_FEATURES[feature] as readonly string[]).includes(plan)
   }
 
   const canRevealEmail = (): boolean => {
+    if (isAdmin) return true
     return (profile?.credits_remaining ?? 0) > 0
   }
 
@@ -59,6 +65,7 @@ export function usePlan() {
 
   return {
     plan,
+    isAdmin,
     hasAccess,
     canRevealEmail,
     trialDaysLeft,

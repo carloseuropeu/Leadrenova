@@ -313,7 +313,7 @@ type SearchLead = Partial<Lead> & { _revealed?: boolean; _tmpId: string }
 
 export default function Prospecter() {
   const { profile, updateProfile } = useAuthStore()
-  const { hasAccess, canRevealEmail, creditsRemaining } = usePlan()
+  const { hasAccess, isAdmin, canRevealEmail, creditsRemaining } = usePlan()
   const queryClient = useQueryClient()
 
   const [zone, setZone]             = useState(profile?.zone_principale ?? '')
@@ -334,7 +334,7 @@ export default function Prospecter() {
 
   const handleSearch = async () => {
     if (!zone.trim()) { setError('Indique une zone de recherche'); return }
-    if (creditsRemaining <= 0) { setError('Crédits épuisés. Passe au plan supérieur pour continuer.'); return }
+    if (!isAdmin && creditsRemaining <= 0) { setError('Crédits épuisés. Passe au plan supérieur pour continuer.'); return }
     setError('')
     setResults([])
     setSaveStatus('idle')
@@ -373,8 +373,8 @@ export default function Prospecter() {
       // ── Afficher les résultats immédiatement, indépendamment du save ──
       setResults(enriched)
 
-      // ── Décrémenter 1 crédit après chaque recherche réussie ──
-      if (enriched.length > 0) {
+      // ── Décrémenter 1 crédit après chaque recherche réussie (sauf admin) ──
+      if (!isAdmin && enriched.length > 0 && creditsRemaining > 0) {
         updateProfile({ credits_remaining: Math.max(0, creditsRemaining - 1) })
           .catch(e => console.warn('[Prospecter] Erreur mise à jour crédits :', e))
       }
@@ -426,7 +426,9 @@ export default function Prospecter() {
     setResults(prev => prev.map(l =>
       l._tmpId === tmpId ? { ...l, _revealed: true } : l
     ))
-    await updateProfile({ credits_remaining: Math.max(0, creditsRemaining - 1) })
+    if (!isAdmin) {
+      await updateProfile({ credits_remaining: Math.max(0, creditsRemaining - 1) })
+    }
   }
 
   const exportCSV = () => {

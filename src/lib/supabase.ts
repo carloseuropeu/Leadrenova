@@ -1,13 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL
-const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY
+const supabaseUrl     = import.meta.env.VITE_SUPABASE_URL     as string | undefined
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables. Check your .env file.')
+  // Warn in console but never throw at module level — a module-level throw
+  // crashes the entire React tree and produces a blank screen with no error message.
+  console.error('[supabase] VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY manquant. Ajoute ces variables dans Vercel > Settings > Environment Variables.')
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(
+  supabaseUrl     ?? 'https://placeholder.supabase.co',
+  supabaseAnonKey ?? 'placeholder-key',
+)
 
 // ── DATABASE TYPES ──────────────────────────────────────────────
 export type UserPlan = 'trial' | 'basic' | 'pro' | 'business'

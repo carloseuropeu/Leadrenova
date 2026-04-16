@@ -1,7 +1,34 @@
-import { useEffect } from 'react'
+import { useEffect, Component, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
+
+// ── Error Boundary — catches render crashes, prevents blank screen ──
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  render() {
+    if (this.state.error) {
+      const err = this.state.error as Error
+      return (
+        <div className="min-h-screen bg-bg flex flex-col items-center justify-center px-6 text-center">
+          <p className="text-red text-lg font-bold mb-2">Une erreur est survenue</p>
+          <p className="text-text2 text-sm mb-4 font-mono break-all max-w-xs">{err.message}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-green text-bg text-sm font-bold py-2 px-6 rounded-xl"
+          >
+            Recharger l'app
+          </button>
+        </div>
+      )
+    }
+    return this.state.error === null ? this.props.children : null
+  }
+}
 
 // Screens
 import Landing     from '@/screens/Landing'
@@ -37,6 +64,7 @@ export default function App() {
   useEffect(() => { init() }, [init])
 
   return (
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
@@ -60,5 +88,6 @@ export default function App() {
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
+    </ErrorBoundary>
   )
 }

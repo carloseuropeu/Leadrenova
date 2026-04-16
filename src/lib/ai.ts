@@ -1,7 +1,7 @@
 import type { Lead } from '@/lib/supabase'
 
 const ANTHROPIC_API = '/api/prospect'
-const MODEL = 'claude-sonnet-4-20250514'
+const MODEL = 'claude-sonnet-4-6'
 
 // ── EMAIL FALLBACK ───────────────────────────────────────────────
 function fallbackEmail(company: string): string {

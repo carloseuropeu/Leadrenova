@@ -29,14 +29,16 @@ export type Feature = keyof typeof PLAN_FEATURES
 const ADMIN_EMAILS = ['mmotivacao36@gmail.com']
 
 export function usePlan() {
-  const { profile } = useAuthStore()
+  const { profile, user } = useAuthStore()
   const plan: UserPlan = profile?.plan ?? 'trial'
 
-  const isAdmin = ADMIN_EMAILS.includes(profile?.email ?? '')
+  // Use user.email (JWT auth — always correct) not profile.email (DB column — may be null)
+  const authEmail = (user?.email ?? profile?.email ?? '').toLowerCase().trim()
+  const isAdmin = ADMIN_EMAILS.map(e => e.toLowerCase()).includes(authEmail)
 
-  // Check if trial has expired
+  // Check if trial has expired (explicit parens — ternary has lower precedence than &&)
   const isTrialExpired = !isAdmin && plan === 'trial' &&
-    profile?.trial_ends_at ? new Date(profile.trial_ends_at) < new Date() : false
+    (profile?.trial_ends_at ? new Date(profile.trial_ends_at) < new Date() : false)
 
   const hasAccess = (feature: Feature): boolean => {
     if (isAdmin) return true

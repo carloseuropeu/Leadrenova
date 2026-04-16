@@ -276,8 +276,8 @@ function LeadModal({ lead, onClose, onStatusChange }: {
             )}
           </div>
 
-          {/* Email IA — visible uniquement si email révélé */}
-          {lead.email_revealed && lead.email && (
+          {/* Email IA — visible pour tous les leads avec email */}
+          {lead.email && (
             <div>
               <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-2">Email IA</p>
               <div className="bg-bg3 border border-border rounded-xl p-4 space-y-3">

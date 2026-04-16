@@ -17,6 +17,9 @@ export default async function handler(req, res) {
 
   // Adresse expéditrice — configurer RESEND_FROM_EMAIL dans les variables Vercel
   // (domaine vérifié dans Resend Dashboard). Fallback: adresse de test Resend.
+  if (!process.env.RESEND_FROM_EMAIL) {
+    console.warn('[api/send-email] RESEND_FROM_EMAIL non défini — utilisation du fallback onboarding@resend.dev (emails limités en production)')
+  }
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
   const fromLabel = fromName ? `${fromName} via LeadRénov` : 'LeadRénov'
 

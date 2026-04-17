@@ -10,6 +10,7 @@ import type { UserPlan } from '@/lib/supabase'
 // ── Plan config ───────────────────────────────────────────────────
 const PLANS: {
   id: UserPlan
+  priceId: string
   name: string
   price: string
   credits: string
@@ -19,6 +20,7 @@ const PLANS: {
 }[] = [
   {
     id: 'basic',
+    priceId: 'price_1TNFuNG54dd12zFbGAB7f0Kb',
     name: 'Essentiel',
     price: '€29/mois',
     credits: '50 crédits/mois',
@@ -28,6 +30,7 @@ const PLANS: {
   },
   {
     id: 'pro',
+    priceId: 'price_1TNG0IG54dd12zFb0tV8DhaU',
     name: 'Pro',
     price: '€59/mois',
     credits: '200 crédits/mois',
@@ -37,6 +40,7 @@ const PLANS: {
   },
   {
     id: 'business',
+    priceId: 'price_1TNG1GG54dd12zFbgMQgdUFV',
     name: 'Business',
     price: '€99/mois',
     credits: 'Crédits illimités',
@@ -114,11 +118,32 @@ export default function Compte() {
   const { plan, trialDaysLeft, creditsRemaining } = usePlan()
   const days = trialDaysLeft()
 
-  const [zone, setZone]           = useState(profile?.zone_principale ?? '')
-  const [notifs, setNotifs]       = useState(true)
-  const [savingZone, setSavingZone] = useState(false)
-  const [showPlans, setShowPlans] = useState(false)
-  const [loggingOut, setLoggingOut] = useState(false)
+  const [zone, setZone]               = useState(profile?.zone_principale ?? '')
+  const [notifs, setNotifs]           = useState(true)
+  const [savingZone, setSavingZone]   = useState(false)
+  const [showPlans, setShowPlans]     = useState(false)
+  const [loggingOut, setLoggingOut]   = useState(false)
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null) // priceId being processed
+
+  const handleCheckout = async (priceId: string) => {
+    if (!profile?.id || checkoutLoading) return
+    setCheckoutLoading(priceId)
+    try {
+      const res = await fetch('/api/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId, userId: profile.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`)
+      window.location.href = data.url
+    } catch (err: any) {
+      console.error('[Compte] Erreur checkout :', err.message)
+      alert(`Impossible d'ouvrir le paiement : ${err.message}`)
+    } finally {
+      setCheckoutLoading(null)
+    }
+  }
 
   const creditsTotal = profile?.credits_monthly ?? 50
   const creditsUsed  = creditsTotal - creditsRemaining
@@ -187,14 +212,18 @@ export default function Compte() {
         {/* Upgrade / manage */}
         {plan === 'trial' || plan === 'basic' ? (
           <button
-            onClick={() => setShowPlans(v => !v)}
-            className="w-full bg-green text-bg font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-green2 transition-colors shadow-lg shadow-green/20"
+            onClick={() => handleCheckout('price_1TNG0IG54dd12zFb0tV8DhaU')}
+            disabled={checkoutLoading === 'price_1TNG0IG54dd12zFb0tV8DhaU'}
+            className="w-full bg-green text-bg font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-green2 transition-colors shadow-lg shadow-green/20 disabled:opacity-60"
           >
             <Zap size={15} />
-            Passer au Pro — €59/mois
+            {checkoutLoading === 'price_1TNG0IG54dd12zFb0tV8DhaU' ? 'Redirection...' : 'Passer au Pro — €59/mois'}
           </button>
         ) : (
-          <button className="w-full bg-bg3 border border-border text-text font-medium py-3 rounded-xl text-sm flex items-center justify-center gap-2 hover:border-border2 transition-colors">
+          <button
+            onClick={() => setShowPlans(v => !v)}
+            className="w-full bg-bg3 border border-border text-text font-medium py-3 rounded-xl text-sm flex items-center justify-center gap-2 hover:border-border2 transition-colors"
+          >
             <CreditCard size={15} />
             Gérer l'abonnement
           </button>
@@ -255,14 +284,18 @@ export default function Compte() {
                   ))}
                 </ul>
                 {!isCurrent && (
-                  <button className={`w-full py-2.5 rounded-xl text-xs font-bold transition-colors ${
-                    p.id === 'pro'
-                      ? 'bg-green text-bg hover:bg-green2 shadow-md shadow-green/20'
-                      : p.id === 'business'
-                        ? 'bg-bdim border border-purple/20 text-purple hover:bg-purple/15'
-                        : 'bg-bg3 border border-border text-text2 hover:border-border2'
-                  }`}>
-                    Choisir {p.name} →
+                  <button
+                    onClick={() => handleCheckout(p.priceId)}
+                    disabled={checkoutLoading === p.priceId}
+                    className={`w-full py-2.5 rounded-xl text-xs font-bold transition-colors disabled:opacity-60 ${
+                      p.id === 'pro'
+                        ? 'bg-green text-bg hover:bg-green2 shadow-md shadow-green/20'
+                        : p.id === 'business'
+                          ? 'bg-bdim border border-purple/20 text-purple hover:bg-purple/15'
+                          : 'bg-bg3 border border-border text-text2 hover:border-border2'
+                    }`}
+                  >
+                    {checkoutLoading === p.priceId ? 'Redirection...' : `Choisir ${p.name} →`}
                   </button>
                 )}
               </div>

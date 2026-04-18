@@ -1,5 +1,11 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useCallback, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  GoogleMap,
+  useJsApiLoader,
+  MarkerF,
+  InfoWindowF,
+} from '@react-google-maps/api'
 import { MapPin, Navigation, Layers, List } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { usePlan } from '@/hooks/usePlan'
@@ -9,9 +15,9 @@ import type { Lead } from '@/lib/supabase'
 
 // ── Score helpers ─────────────────────────────────────────────────
 function scoreColor(score: number): string {
-  if (score >= 80) return '#4ade80'  // green
-  if (score >= 60) return '#fbbf24'  // amber
-  return '#f87171'                   // red
+  if (score >= 80) return '#4ade80'
+  if (score >= 60) return '#fbbf24'
+  return '#f87171'
 }
 
 function scoreBg(score: number): string {
@@ -33,128 +39,163 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-// ── Mock map component ────────────────────────────────────────────
-// Renders a stylised dark map with SVG pins at relative positions.
-// Coordinates are normalised from lat/lng to a 0-100 % canvas.
-function MockMap({
+// ── Dark map style ────────────────────────────────────────────────
+const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#0a0f0a' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0a0f0a' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#7a917a' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1a261a' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0d140d' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#223322' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060c06' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#0d140d' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#0d140d' }] },
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#1e2e1e' }] },
+]
+
+// ── Custom pin SVG icon ───────────────────────────────────────────
+function pinIcon(color: string, score: number): google.maps.Symbol {
+  return {
+    path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z',
+    fillColor: color,
+    fillOpacity: 1,
+    strokeColor: '#0a0f0a',
+    strokeWeight: 1.5,
+    scale: 1.6,
+    anchor: new google.maps.Point(12, 22),
+    labelOrigin: new google.maps.Point(12, 9),
+  } as google.maps.Symbol
+}
+
+// ── Geocode a single lead address ────────────────────────────────
+async function geocodeLead(lead: Lead, apiKey: string): Promise<{ lat: number; lng: number } | null> {
+  const query = [lead.address, lead.city, 'France'].filter(Boolean).join(', ')
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${apiKey}`
+  try {
+    const res = await fetch(url)
+    const data = await res.json()
+    if (data.status === 'OK' && data.results[0]) {
+      const { lat, lng } = data.results[0].geometry.location
+      return { lat, lng }
+    }
+  } catch {
+    // silently skip
+  }
+  return null
+}
+
+// ── Google Map component ─────────────────────────────────────────
+const MAP_CONTAINER = { width: '100%', height: '420px' }
+const FRANCE_CENTER = { lat: 46.5, lng: 2.3 }
+
+function RealMap({
   leads,
-  rayon,
   focusedId,
   onPinClick,
+  apiKey,
 }: {
   leads: Lead[]
-  rayon: number
   focusedId: string | null
   onPinClick: (id: string) => void
+  apiKey: string
 }) {
-  // Build a bounding box from actual lead coords (fallback to France bounds)
-  const lats = leads.filter(l => l.lat).map(l => l.lat!)
-  const lngs = leads.filter(l => l.lng).map(l => l.lng!)
+  const queryClient = useQueryClient()
+  const geocodingRef = useRef(new Set<string>())
 
-  const minLat = lats.length ? Math.min(...lats) - 0.3 : 43.0
-  const maxLat = lats.length ? Math.max(...lats) + 0.3 : 49.0
-  const minLng = lngs.length ? Math.min(...lngs) - 0.3 : -1.5
-  const maxLng = lngs.length ? Math.max(...lngs) + 0.3 : 7.5
+  const leadsWithCoords = leads.filter(l => l.lat && l.lng)
 
-  const toXY = (lat: number, lng: number) => ({
-    x: ((lng - minLng) / (maxLng - minLng)) * 100,
-    y: ((maxLat - lat) / (maxLat - minLat)) * 100,
-  })
-
-  // Fallback mock positions when no real coords
-  const mockPositions: Record<string, { x: number; y: number }> = {}
-  leads.forEach((l, i) => {
-    if (!l.lat || !l.lng) {
-      mockPositions[l.id] = {
-        x: 15 + ((i * 37) % 70),
-        y: 15 + ((i * 53) % 70),
-      }
+  const centre = useMemo(() => {
+    if (!leadsWithCoords.length) return FRANCE_CENTER
+    return {
+      lat: leadsWithCoords.reduce((s, l) => s + l.lat!, 0) / leadsWithCoords.length,
+      lng: leadsWithCoords.reduce((s, l) => s + l.lng!, 0) / leadsWithCoords.length,
     }
-  })
+  }, [leadsWithCoords])
+
+  // Geocode leads that have no coords, then persist to Supabase
+  const geocodeMissing = useCallback(async () => {
+    const missing = leads.filter(l => !l.lat || !l.lng)
+    if (!missing.length) return
+
+    for (const lead of missing) {
+      if (geocodingRef.current.has(lead.id)) continue
+      geocodingRef.current.add(lead.id)
+
+      const coords = await geocodeLead(lead, apiKey)
+      if (!coords) continue
+
+      await supabase
+        .from('leads')
+        .update({ lat: coords.lat, lng: coords.lng })
+        .eq('id', lead.id)
+    }
+
+    // Invalidate so map re-renders with new coords
+    queryClient.invalidateQueries({ queryKey: ['leads'] })
+  }, [leads, apiKey, queryClient])
+
+  const handleMapLoad = useCallback(() => {
+    geocodeMissing()
+  }, [geocodeMissing])
+
+  const focusedLead = leads.find(l => l.id === focusedId) ?? null
 
   return (
-    <div className="relative w-full bg-bg3 border border-border rounded-2xl overflow-hidden" style={{ paddingBottom: '60%' }}>
-      {/* Grid lines — mock map texture */}
-      <svg
-        className="absolute inset-0 w-full h-full opacity-10"
-        viewBox="0 0 100 60"
-        preserveAspectRatio="none"
-      >
-        {/* Grid */}
-        {Array.from({ length: 10 }).map((_, i) => (
-          <line key={`v${i}`} x1={i * 10} y1={0} x2={i * 10} y2={60} stroke="#4ade80" strokeWidth={0.3} />
-        ))}
-        {Array.from({ length: 6 }).map((_, i) => (
-          <line key={`h${i}`} x1={0} y1={i * 10} x2={100} y2={i * 10} stroke="#4ade80" strokeWidth={0.3} />
-        ))}
-        {/* Road-like lines */}
-        <path d="M0,30 Q25,20 50,30 T100,25" stroke="#4ade80" strokeWidth={0.5} fill="none" />
-        <path d="M20,0 Q30,15 25,30 T30,60" stroke="#4ade80" strokeWidth={0.5} fill="none" />
-        <path d="M60,0 Q55,20 65,30 T60,60" stroke="#4ade80" strokeWidth={0.3} fill="none" />
-        <path d="M0,45 Q40,40 70,50 T100,42" stroke="#4ade80" strokeWidth={0.3} fill="none" />
-      </svg>
-
-      {/* Zone radius circle */}
-      <div
-        className="absolute border-2 border-green/20 rounded-full bg-green/5 pointer-events-none"
-        style={{
-          width: `${Math.min(rayon * 0.6, 70)}%`,
-          paddingBottom: `${Math.min(rayon * 0.6, 70)}%`,
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
+    <div className="rounded-2xl overflow-hidden border border-border">
+      <GoogleMap
+        mapContainerStyle={MAP_CONTAINER}
+        center={centre}
+        zoom={leadsWithCoords.length ? 10 : 6}
+        options={{
+          styles: DARK_MAP_STYLES,
+          disableDefaultUI: true,
+          zoomControl: true,
+          gestureHandling: 'greedy',
         }}
-      />
-
-      {/* Lead pins */}
-      {leads.map(lead => {
-        const pos = lead.lat && lead.lng
-          ? toXY(lead.lat, lead.lng)
-          : (mockPositions[lead.id] ?? { x: 50, y: 50 })
-        const isFocused = focusedId === lead.id
-        const color = scoreColor(lead.renovation_score)
-
-        return (
-          <button
+        onLoad={handleMapLoad}
+      >
+        {leadsWithCoords.map(lead => (
+          <MarkerF
             key={lead.id}
+            position={{ lat: lead.lat!, lng: lead.lng! }}
+            icon={pinIcon(scoreColor(lead.renovation_score), lead.renovation_score)}
+            label={{
+              text: String(lead.renovation_score),
+              color: '#0a0f0a',
+              fontSize: '9px',
+              fontWeight: 'bold',
+            }}
             onClick={() => onPinClick(lead.id)}
-            className="absolute -translate-x-1/2 -translate-y-full transition-transform hover:scale-125 focus:outline-none"
-            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-            aria-label={lead.company}
           >
-            {/* Pin shape */}
-            <div className={`relative flex flex-col items-center transition-transform ${isFocused ? 'scale-150' : ''}`}>
-              <div
-                className="w-6 h-6 rounded-full border-2 border-bg flex items-center justify-center shadow-md"
-                style={{ backgroundColor: color }}
+            {focusedId === lead.id && focusedLead && (
+              <InfoWindowF
+                position={{ lat: lead.lat!, lng: lead.lng! }}
+                onCloseClick={() => onPinClick(lead.id)}
               >
-                <span className="text-bg text-[8px] font-bold">{lead.renovation_score}</span>
-              </div>
-              <div
-                className="w-1 h-2 rounded-b-full"
-                style={{ backgroundColor: color }}
-              />
-            </div>
-          </button>
-        )
-      })}
-
-      {/* Centre marker */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-green rounded-full border-2 border-bg shadow-lg shadow-green/40 pointer-events-none" />
+                <div style={{ background: '#131a13', color: '#dfe8df', padding: '8px 12px', borderRadius: 8, minWidth: 140 }}>
+                  <p style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{focusedLead.company}</p>
+                  <p style={{ fontSize: 11, color: '#7a917a' }}>{focusedLead.city}</p>
+                  <p style={{ fontSize: 11, marginTop: 4, color: scoreColor(focusedLead.renovation_score) }}>
+                    Score : {focusedLead.renovation_score}
+                  </p>
+                </div>
+              </InfoWindowF>
+            )}
+          </MarkerF>
+        ))}
+      </GoogleMap>
 
       {/* Legend */}
-      <div className="absolute bottom-3 right-3 bg-bg2/90 backdrop-blur border border-border rounded-xl px-3 py-2 flex gap-3">
-        {[['≥80', 'bg-green'], ['60–79', 'bg-amber'], ['<60', 'bg-red']].map(([label, cls]) => (
+      <div className="bg-bg2 border-t border-border px-4 py-2.5 flex items-center gap-4">
+        {([['≥80', '#4ade80'], ['60–79', '#fbbf24'], ['<60', '#f87171']] as const).map(([label, color]) => (
           <div key={label} className="flex items-center gap-1.5">
-            <div className={`w-2 h-2 rounded-full ${cls}`} />
-            <span className="text-[10px] font-mono text-text3">{label}</span>
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+            <span className="text-[11px] font-mono text-text3">{label}</span>
           </div>
         ))}
-      </div>
-
-      {/* Google Maps CTA */}
-      <div className="absolute top-3 left-3 bg-bg2/90 backdrop-blur border border-border rounded-xl px-3 py-1.5">
-        <span className="text-[10px] font-mono text-text3">Carte simulée · Google Maps bientôt</span>
+        {leads.some(l => !l.lat || !l.lng) && (
+          <span className="ml-auto text-[10px] font-mono text-text3 animate-pulse">Géocodage en cours…</span>
+        )}
       </div>
     </div>
   )
@@ -164,6 +205,13 @@ function MockMap({
 export default function Carte() {
   const { profile } = useAuthStore()
   const { hasAccess } = usePlan()
+
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined
+
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: apiKey ?? '',
+    libraries: ['places'],
+  })
 
   const [rayon, setRayon]         = useState(profile?.rayon_km ?? 50)
   const [view, setView]           = useState<'map' | 'list'>('map')
@@ -183,13 +231,13 @@ export default function Carte() {
     },
   })
 
-  // Sort by distance from profile zone (mock: use lat/lng if present, else just keep order)
   const centreCoords = useMemo(() => {
-    const leadsWithCoords = leads.filter(l => l.lat && l.lng)
-    if (!leadsWithCoords.length) return null
-    const avgLat = leadsWithCoords.reduce((s, l) => s + l.lat!, 0) / leadsWithCoords.length
-    const avgLng = leadsWithCoords.reduce((s, l) => s + l.lng!, 0) / leadsWithCoords.length
-    return { lat: avgLat, lng: avgLng }
+    const withCoords = leads.filter(l => l.lat && l.lng)
+    if (!withCoords.length) return null
+    return {
+      lat: withCoords.reduce((s, l) => s + l.lat!, 0) / withCoords.length,
+      lng: withCoords.reduce((s, l) => s + l.lng!, 0) / withCoords.length,
+    }
   }, [leads])
 
   const sortedLeads = useMemo(() => {
@@ -218,7 +266,6 @@ export default function Carte() {
       <div className="px-4 pt-6 pb-3">
         <div className="flex items-center justify-between mb-1">
           <h1 className="font-display font-bold text-2xl text-text">Carte</h1>
-          {/* View toggle */}
           <div className="flex bg-bg2 border border-border rounded-xl p-0.5">
             <button
               onClick={() => setView('map')}
@@ -284,7 +331,6 @@ export default function Carte() {
           feature="map_full"
           message="La carte interactive est disponible dans le plan Pro. Visualise tes leads sur une carte et filtre par zone."
         >
-          {/* === PRO+ CONTENT === */}
           {isLoading ? (
             <div className="flex items-center justify-center py-16">
               <div className="w-8 h-8 border-2 border-border border-t-green rounded-full animate-spin" />
@@ -299,17 +345,29 @@ export default function Carte() {
             </div>
           ) : (
             <div className="space-y-4">
+
               {/* Map view */}
               {view === 'map' && (
                 <>
-                  <MockMap
-                    leads={filteredByRadius}
-                    rayon={rayon}
-                    focusedId={focusedId}
-                    onPinClick={id => setFocusedId(prev => prev === id ? null : id)}
-                  />
+                  {loadError ? (
+                    <div className="bg-bg2 border border-red/20 rounded-2xl p-6 text-center">
+                      <p className="text-sm text-red">Impossible de charger Google Maps</p>
+                      <p className="text-xs text-text3 mt-1">Vérifie la clé VITE_GOOGLE_MAPS_KEY</p>
+                    </div>
+                  ) : !isLoaded ? (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="w-8 h-8 border-2 border-border border-t-green rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <RealMap
+                      leads={filteredByRadius}
+                      focusedId={focusedId}
+                      onPinClick={id => setFocusedId(prev => prev === id ? null : id)}
+                      apiKey={apiKey ?? ''}
+                    />
+                  )}
 
-                  {/* Focused lead info */}
+                  {/* Focused lead card */}
                   {focusedLead && (
                     <div className="bg-bg2 border border-green/20 rounded-2xl p-4 flex items-center gap-3">
                       <div className="w-10 h-10 bg-gdim border border-green/20 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -324,10 +382,7 @@ export default function Carte() {
                       <div className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full border ${scoreBg(focusedLead.renovation_score)}`}>
                         {focusedLead.renovation_score}
                       </div>
-                      <button
-                        onClick={() => setFocusedId(null)}
-                        className="text-text3 hover:text-text2 ml-1"
-                      >
+                      <button onClick={() => setFocusedId(null)} className="text-text3 hover:text-text2 ml-1">
                         ✕
                       </button>
                     </div>
@@ -348,19 +403,14 @@ export default function Carte() {
                         key={lead.id}
                         className="bg-bg2 border border-border rounded-xl p-4 flex items-center gap-3"
                       >
-                        {/* Rank */}
                         <div className="w-7 text-center">
                           <span className="text-xs font-mono text-text3">{idx + 1}</span>
                         </div>
-
-                        {/* Avatar */}
                         <div className="w-9 h-9 bg-bg3 border border-border rounded-xl flex items-center justify-center flex-shrink-0">
                           <span className="text-xs font-bold text-text2">
                             {lead.company.charAt(0).toUpperCase()}
                           </span>
                         </div>
-
-                        {/* Info */}
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-text truncate">{lead.company}</p>
                           <div className="flex items-center gap-2 text-xs text-text2 mt-0.5">
@@ -374,8 +424,6 @@ export default function Carte() {
                             )}
                           </div>
                         </div>
-
-                        {/* Score */}
                         <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border flex-shrink-0 ${scoreBg(lead.renovation_score)}`}>
                           {lead.renovation_score}
                         </span>

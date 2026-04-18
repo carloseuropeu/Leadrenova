@@ -74,6 +74,16 @@ export default function Dashboard() {
     (['contacte', 'visite', 'devis_envoye'] as LeadStatus[]).includes(l.status)
   ).length
 
+  // Stale contact alerts: status 'contacte' with no update in 7+ days
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const staleLeads = leads
+    .filter(l => {
+      if (l.status !== 'contacte') return false
+      const lastActivity = new Date(l.last_contact_at ?? l.updated_at)
+      return lastActivity < sevenDaysAgo
+    })
+    .slice(0, 3)
+
   const metrics = [
     { label: 'Leads ce mois',        value: leadsThisMonth,  icon: TrendingUp,   color: 'text-green'  },
     { label: 'Emails générés',       value: emailsGenerated, icon: Mail,         color: 'text-blue'   },
@@ -110,6 +120,27 @@ export default function Dashboard() {
           </button>
         </div>
       )}
+
+      {/* Stale contact alerts */}
+      {staleLeads.map(lead => (
+        <div key={lead.id} className="bg-adim border border-amber/20 rounded-xl px-4 py-3 flex items-start gap-3">
+          <AlertTriangle size={15} className="text-amber flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-mono text-amber font-bold">Pas de nouvelles</p>
+            <p className="text-xs text-text2 mt-0.5 leading-snug">
+              Pas de nouvelles de{' '}
+              <span className="text-text font-semibold">{lead.company}</span>{' '}
+              depuis 7 jours
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/mes-leads')}
+            className="text-xs text-amber border border-amber/30 rounded-lg px-2.5 py-1 hover:bg-amber/10 transition-colors flex-shrink-0 font-mono"
+          >
+            Voir
+          </button>
+        </div>
+      ))}
 
       {/* Greeting */}
       <div>

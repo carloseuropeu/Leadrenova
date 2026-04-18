@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Search, X, Phone, Mail, Globe, MapPin,
-  Calendar, ChevronRight, Eye, Check, Loader2, Zap, CheckCircle
+  Calendar, ChevronRight, Eye, Check, Loader2, Zap, CheckCircle, Camera
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { supabase } from '@/lib/supabase'
@@ -56,8 +56,15 @@ function LeadModal({ lead, onClose, onStatusChange }: {
   onStatusChange: (id: string, status: LeadStatus) => void
 }) {
   const { profile } = useAuthStore()
-  const [notes, setNotes]           = useState(lead.notes ?? '')
-  const [saving, setSaving]         = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const [notes,         setNotes]         = useState(lead.notes          ?? '')
+  const [chantierStart, setChantierStart] = useState(lead.chantier_start ?? '')
+  const [chantierEnd,   setChantierEnd]   = useState(lead.chantier_end   ?? '')
+  const [photos,        setPhotos]        = useState<string[]>(lead.photos ?? [])
+  const [saving,        setSaving]        = useState(false)
+  const [uploading,     setUploading]     = useState(false)
+
   const [emailSubject, setEmailSubject] = useState('')
   const [emailBody, setEmailBody]       = useState('')
   const [genLoading, setGenLoading]     = useState(false)
@@ -69,6 +76,29 @@ function LeadModal({ lead, onClose, onStatusChange }: {
     setSaving(true)
     await supabase.from('leads').update({ notes }).eq('id', lead.id)
     setSaving(false)
+  }
+
+  const saveChantierField = async (field: 'chantier_start' | 'chantier_end', value: string) => {
+    await supabase.from('leads').update({ [field]: value || null }).eq('id', lead.id)
+  }
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length || !profile) return
+    setUploading(true)
+    const updated = [...photos]
+    for (const file of files) {
+      const path = `${profile.id}/${lead.id}/${Date.now()}-${file.name}`
+      const { error } = await supabase.storage.from('chantier-photos').upload(path, file)
+      if (!error) {
+        const { data } = supabase.storage.from('chantier-photos').getPublicUrl(path)
+        updated.push(data.publicUrl)
+      }
+    }
+    await supabase.from('leads').update({ photos: updated }).eq('id', lead.id)
+    setPhotos(updated)
+    setUploading(false)
+    if (fileRef.current) fileRef.current.value = ''
   }
 
   const handleGenerate = async () => {
@@ -247,33 +277,86 @@ function LeadModal({ lead, onClose, onStatusChange }: {
             </div>
           )}
 
-          {/* Chantier dates */}
-          {(lead.chantier_start || lead.chantier_end) && (
-            <div>
-              <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-2">Chantier</p>
-              <div className="flex items-center gap-2 text-sm text-text2">
-                <Calendar size={14} className="text-text3" />
-                {lead.chantier_start && <span>{lead.chantier_start}</span>}
-                {lead.chantier_start && lead.chantier_end && <span>→</span>}
-                {lead.chantier_end && <span>{lead.chantier_end}</span>}
+          {/* Chantier CRM */}
+          <div>
+            <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-3">Chantier</p>
+            <div className="space-y-3">
+
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] font-mono text-text3 mb-1.5 flex items-center gap-1">
+                    <Calendar size={11} /> Début
+                  </label>
+                  <input
+                    type="date"
+                    value={chantierStart}
+                    onChange={e => setChantierStart(e.target.value)}
+                    onBlur={() => saveChantierField('chantier_start', chantierStart)}
+                    className="w-full bg-bg3 border border-border focus:border-green/50 rounded-xl px-3 py-2.5 text-sm text-text outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-text3 mb-1.5 block">Fin</label>
+                  <input
+                    type="date"
+                    value={chantierEnd}
+                    onChange={e => setChantierEnd(e.target.value)}
+                    onBlur={() => saveChantierField('chantier_end', chantierEnd)}
+                    className="w-full bg-bg3 border border-border focus:border-green/50 rounded-xl px-3 py-2.5 text-sm text-text outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Notes de visite */}
+              <div>
+                <label className="text-[11px] font-mono text-text3 mb-1.5 block">Notes de visite</label>
+                <textarea
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  onBlur={saveNotes}
+                  placeholder="Observations, détails du chantier..."
+                  rows={3}
+                  className="w-full bg-bg3 border border-border focus:border-green/50 rounded-xl px-4 py-3 text-sm text-text placeholder-text3 outline-none resize-none"
+                />
+                {saving && (
+                  <p className="text-xs text-text3 font-mono mt-1">Sauvegarde...</p>
+                )}
+              </div>
+
+              {/* Photos */}
+              <div>
+                <label className="text-[11px] font-mono text-text3 mb-2 block">Photos du chantier</label>
+                {photos.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    {photos.map((url, i) => (
+                      <div key={i} className="aspect-square rounded-xl overflow-hidden bg-bg3 border border-border">
+                        <img src={url} alt="" className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handlePhotoUpload}
+                />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={uploading}
+                  className="w-full flex items-center justify-center gap-2 bg-bg3 border border-dashed border-border2 text-text3 text-xs font-mono py-3 rounded-xl hover:border-green/40 hover:text-text2 transition-colors disabled:opacity-50"
+                >
+                  {uploading ? (
+                    <><Loader2 size={13} className="animate-spin" /> Upload en cours...</>
+                  ) : (
+                    <><Camera size={13} /> Ajouter des photos</>
+                  )}
+                </button>
               </div>
             </div>
-          )}
-
-          {/* Notes */}
-          <div>
-            <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-2">Notes</p>
-            <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              onBlur={saveNotes}
-              placeholder="Ajoute tes notes sur ce lead..."
-              rows={4}
-              className="w-full bg-bg3 border border-border focus:border-green/50 rounded-xl px-4 py-3 text-sm text-text placeholder-text3 outline-none resize-none"
-            />
-            {saving && (
-              <p className="text-xs text-text3 font-mono mt-1">Sauvegarde...</p>
-            )}
           </div>
 
           {/* Email IA — visible pour tous les leads avec email */}

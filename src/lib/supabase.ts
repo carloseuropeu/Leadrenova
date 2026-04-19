@@ -42,6 +42,11 @@ export interface Profile {
   credits_remaining: number
   credits_monthly: number
   created_at: string
+  // Facturation
+  siret: string | null
+  tva_number: string | null
+  address: string | null
+  is_micro_entreprise: boolean
 }
 
 export interface Lead {
@@ -83,14 +88,57 @@ export interface GeneratedEmail {
   created_at: string
 }
 
+export interface LigneDevis {
+  id: string
+  description: string
+  quantite: number
+  unite: string
+  prix_unitaire_ht: number
+  total_ht: number
+}
+
+export type DevisStatut = 'brouillon' | 'envoye' | 'accepte' | 'refuse'
+
 export interface Devis {
   id: string
   user_id: string
-  lead_id: string
+  lead_id: string | null
   numero: string
+  objet: string | null
+  lignes: LigneDevis[]
   montant_ht: number
   tva_rate: number
+  montant_tva: number
   montant_ttc: number
-  statut: 'brouillon' | 'envoye' | 'accepte' | 'refuse'
+  statut: DevisStatut
+  validite_jours: number
+  notes: string | null
+  sent_at: string | null
+  accepted_at: string | null
   created_at: string
+  updated_at: string
+}
+
+export type FactureStatut = 'brouillon' | 'envoyee' | 'payee' | 'retard' | 'annulee'
+
+export interface Facture {
+  id: string
+  user_id: string
+  lead_id: string | null
+  devis_id: string | null
+  numero: string
+  objet: string | null
+  lignes: LigneDevis[]
+  montant_ht: number
+  tva_rate: number
+  montant_tva: number
+  montant_ttc: number
+  statut: FactureStatut
+  date_emission: string
+  date_echeance: string
+  date_paiement: string | null
+  notes: string | null
+  sent_at: string | null
+  created_at: string
+  updated_at: string
 }

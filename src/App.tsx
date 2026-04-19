@@ -38,6 +38,8 @@ import Dashboard   from '@/screens/Dashboard'
 import Prospecter  from '@/screens/Prospecter'
 import MesLeads    from '@/screens/MesLeads'
 import Carte       from '@/screens/Carte'
+import DevisScreen from '@/screens/Devis'
+import Factures    from '@/screens/Factures'
 import Compte      from '@/screens/Compte'
 
 // Layout
@@ -81,6 +83,8 @@ export default function App() {
             <Route path="/prospecter"  element={<Prospecter />} />
             <Route path="/mes-leads"   element={<MesLeads />} />
             <Route path="/carte"       element={<Carte />} />
+            <Route path="/devis"       element={<DevisScreen />} />
+            <Route path="/factures"    element={<Factures />} />
             <Route path="/compte"      element={<Compte />} />
           </Route>
 

@@ -2,12 +2,39 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Plus, TrendingUp, Mail, Building2,
-  MessageSquare, ArrowRight, AlertTriangle
+  MessageSquare, ArrowRight, AlertTriangle, Euro, Clock, BarChart2,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { usePlan } from '@/hooks/usePlan'
+import LockedFeature from '@/components/ui/LockedFeature'
 import { supabase } from '@/lib/supabase'
-import type { Lead, LeadStatus } from '@/lib/supabase'
+import type { Lead, LeadStatus, Devis, Facture } from '@/lib/supabase'
+
+// ── SVG bar chart (no dependency) ────────────────────────────────
+function MonthlyChart({ months }: { months: { label: string; value: number }[] }) {
+  const max    = Math.max(...months.map(m => m.value), 1)
+  const BAR_W  = 28
+  const GAP    = 6
+  const H      = 56
+  const W      = months.length * (BAR_W + GAP) - GAP
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" preserveAspectRatio="none">
+      {months.map((m, i) => {
+        const barH = m.value > 0 ? Math.max((m.value / max) * H, 4) : 3
+        const x    = i * (BAR_W + GAP)
+        return (
+          <g key={i}>
+            <rect x={x} y={H - barH} width={BAR_W} height={barH} rx={3}
+              fill={m.value > 0 ? '#4ade80' : '#1e2e1e'} />
+            <text x={x + BAR_W / 2} y={H + 13} textAnchor="middle" fontSize="7.5" fill="#7a917a">
+              {m.label}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
 
 // ── Status config ────────────────────────────────────────────────
 const STATUS_CFG: Record<LeadStatus, { label: string; cls: string }> = {
@@ -73,6 +100,56 @@ export default function Dashboard() {
   const enDiscussion    = leads.filter(l =>
     (['contacte', 'visite', 'devis_envoye'] as LeadStatus[]).includes(l.status)
   ).length
+
+  // Fetch devis + factures for Finances section
+  const { data: devisList = [] } = useQuery<Devis[]>({
+    queryKey: ['devis', profile?.id],
+    enabled:  !!profile?.id,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase.from('devis').select('id,statut,montant_ttc,created_at').eq('user_id', profile!.id)
+      return (data ?? []) as Devis[]
+    },
+  })
+
+  const { data: facturesList = [] } = useQuery<Facture[]>({
+    queryKey: ['factures', profile?.id],
+    enabled:  !!profile?.id,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase.from('factures').select('id,statut,montant_ttc,date_emission,date_paiement,devis_id').eq('user_id', profile!.id)
+      return (data ?? []) as Facture[]
+    },
+  })
+
+  // Financial metrics
+  const thisMonth  = new Date(); thisMonth.setDate(1); thisMonth.setHours(0,0,0,0)
+  const caMois     = facturesList
+    .filter(f => f.statut === 'payee' && f.date_paiement && new Date(f.date_paiement) >= thisMonth)
+    .reduce((s, f) => s + f.montant_ttc, 0)
+  const caAttente  = facturesList
+    .filter(f => f.statut === 'envoyee' || f.statut === 'retard')
+    .reduce((s, f) => s + f.montant_ttc, 0)
+  const devisAcceptes = devisList.filter(d => d.statut === 'accepte').length
+  const txConversion  = devisList.length
+    ? Math.round((devisAcceptes / devisList.length) * 100)
+    : 0
+
+  // Last 6 months bar chart
+  const now6 = new Date()
+  const chartMonths = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now6.getFullYear(), now6.getMonth() - 5 + i, 1)
+    const value = facturesList
+      .filter(f => f.statut === 'payee' && f.date_paiement)
+      .filter(f => {
+        const pd = new Date(f.date_paiement!)
+        return pd.getFullYear() === d.getFullYear() && pd.getMonth() === d.getMonth()
+      })
+      .reduce((s, f) => s + f.montant_ttc, 0)
+    return { label: d.toLocaleDateString('fr-FR', { month: 'short' }), value }
+  })
+
+  const eur = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' €'
 
   // Stale contact alerts: status 'contacte' with no update in 7+ days
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
@@ -179,6 +256,56 @@ export default function Dashboard() {
             <p className="text-xs text-text2 leading-snug">{label}</p>
           </div>
         ))}
+      </div>
+
+      {/* Finances section */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display font-bold text-base text-text">Finances</h2>
+          <button
+            onClick={() => navigate('/factures')}
+            className="text-xs text-green font-mono flex items-center gap-1 hover:underline"
+          >
+            Voir tout <ArrowRight size={12} />
+          </button>
+        </div>
+        <LockedFeature
+          feature="financial_dashboard"
+          message="Le tableau de bord financier est disponible dans le plan Business."
+          onUpgrade={() => navigate('/compte')}
+        >
+          <div className="space-y-3">
+            {/* KPI row */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-bg2 border border-border rounded-xl p-3 flex flex-col gap-1">
+                <div className="w-7 h-7 bg-gdim border border-green/20 rounded-lg flex items-center justify-center">
+                  <Euro size={13} className="text-green" />
+                </div>
+                <p className="font-display font-bold text-green text-lg leading-none mt-1">{eur(caMois)}</p>
+                <p className="text-[10px] text-text2 leading-snug">CA encaissé ce mois</p>
+              </div>
+              <div className="bg-bg2 border border-border rounded-xl p-3 flex flex-col gap-1">
+                <div className="w-7 h-7 bg-adim border border-amber/20 rounded-lg flex items-center justify-center">
+                  <Clock size={13} className="text-amber" />
+                </div>
+                <p className="font-display font-bold text-amber text-lg leading-none mt-1">{eur(caAttente)}</p>
+                <p className="text-[10px] text-text2 leading-snug">CA en attente</p>
+              </div>
+              <div className="bg-bg2 border border-border rounded-xl p-3 flex flex-col gap-1">
+                <div className="w-7 h-7 bg-bdim border border-blue/20 rounded-lg flex items-center justify-center">
+                  <BarChart2 size={13} className="text-blue" />
+                </div>
+                <p className="font-display font-bold text-blue text-lg leading-none mt-1">{txConversion} %</p>
+                <p className="text-[10px] text-text2 leading-snug">Taux conversion</p>
+              </div>
+            </div>
+            {/* Bar chart */}
+            <div className="bg-bg2 border border-border rounded-xl p-4">
+              <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-3">CA mensuel encaissé</p>
+              <MonthlyChart months={chartMonths} />
+            </div>
+          </div>
+        </LockedFeature>
       </div>
 
       {/* Recent leads */}

@@ -19,7 +19,7 @@ export default {
         purple:  '#a78bfa',
         text:    '#dfe8df',
         text2:   '#7a917a',
-        text3:   '#688468',
+        text3:   '#728e72',
       },
       fontFamily: {
         display: ['Syne', 'sans-serif'],

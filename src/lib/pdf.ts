@@ -13,7 +13,7 @@ const C = {
   headerText: [160,220,160] as [number,number,number],
   rowAlt:     [248,250,248] as [number,number,number],
   rule:       [200,210,200] as [number,number,number],
-  muted:      [120,130,120] as [number,number,number],
+  muted:      [80, 90, 80]  as [number,number,number],
   dark:       [30, 30, 30]  as [number,number,number],
   green:      [40,160,60]   as [number,number,number],
 }

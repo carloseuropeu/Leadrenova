@@ -19,7 +19,7 @@ const PLAN_FEATURES = {
   multi_region:       ['pro', 'business'],
 
   // Business features (preview in pro)
-  devis_generator:    ['business'],
+  devis_generator:    ['pro', 'business'],
   factures:           ['business'],
   financial_dashboard:['business'],
 } as const

@@ -1,4 +1,4 @@
-import type { Lead } from '@/lib/supabase'
+import type { Lead, LigneDevis } from '@/lib/supabase'
 
 const ANTHROPIC_API = '/api/prospect'
 const MODEL = 'claude-sonnet-4-6'
@@ -107,23 +107,59 @@ export async function sendEmail(params: {
   return res.json()
 }
 
-// ── DEVIS IA (Business plan) ─────────────────────────────────────
-export async function generateDevis(lead: Partial<Lead>, notes: string): Promise<any> {
+// ── DEVIS IA (Pro/Business plan) ────────────────────────────────
+export async function generateDevis(
+  lead: Partial<Lead>,
+  visitNotes: string,
+  tvaRate = 20,
+): Promise<{
+  lignes: LigneDevis[]
+  montant_ht: number
+  montant_tva: number
+  montant_ttc: number
+  notes: string | null
+}> {
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1000,
-      system: `Tu es un assistant de devis BTP français. Génère un devis structuré basé sur les notes de visite.
-Réponds UNIQUEMENT en JSON: {"lignes":[{"description":"","quantite":1,"unite":"m²","prix_unitaire":45}],"notes_devis":""}`,
-      messages: [{ role: 'user', content: `Notes de visite pour ${lead.company}: ${notes}` }]
-    })
+      max_tokens: 2000,
+      system: `Tu es un expert en chiffrage BTP français. Génère un devis détaillé basé sur les notes de visite.
+Chaque ligne doit avoir une description précise, une quantité réaliste, une unité standard (m², ml, u, forfait, heure) et un prix unitaire HT en euros cohérent avec le marché français.
+Réponds UNIQUEMENT en JSON valide sans markdown :
+{"lignes":[{"description":"Dépose ancien carrelage","quantite":25,"unite":"m²","prix_unitaire_ht":8.50},{"description":"Fourniture et pose carrelage 60x60","quantite":25,"unite":"m²","prix_unitaire_ht":45.00}],"notes_techniques":"Prévoir protection des sols existants. Délai estimé : 3 jours."}`,
+      messages: [{
+        role: 'user',
+        content: `Entreprise : ${lead.company ?? 'Client'}\nVille : ${lead.city ?? ''}\nNotes de visite : ${visitNotes}`,
+      }],
+    }),
   })
 
   if (!res.ok) throw new Error(`API error ${res.status}`)
   const data = await res.json()
-  const text = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') || ''
-  try { return JSON.parse(text.replace(/```json|```/g, '').trim()) }
-  catch { return { lignes: [], notes_devis: '' } }
+  const text: string = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') ?? ''
+
+  let raw: { lignes: { description: string; quantite: number; unite: string; prix_unitaire_ht: number }[]; notes_techniques?: string }
+  try {
+    const match = text.match(/\{[\s\S]*"lignes"[\s\S]*\}/)
+    raw = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
+  } catch {
+    return { lignes: [], montant_ht: 0, montant_tva: 0, montant_ttc: 0, notes: null }
+  }
+
+  const lignes: LigneDevis[] = (raw.lignes ?? []).map((l, i) => ({
+    id: String(i + 1),
+    description:      l.description      ?? '',
+    quantite:         Number(l.quantite)  || 0,
+    unite:            l.unite             ?? 'u',
+    prix_unitaire_ht: Number(l.prix_unitaire_ht) || 0,
+    total_ht:         Math.round(Number(l.quantite) * Number(l.prix_unitaire_ht) * 100) / 100,
+  }))
+
+  const montant_ht  = Math.round(lignes.reduce((s, l) => s + l.total_ht, 0) * 100) / 100
+  const montant_tva = Math.round(montant_ht * tvaRate / 100 * 100) / 100
+  const montant_ttc = Math.round((montant_ht + montant_tva) * 100) / 100
+
+  return { lignes, montant_ht, montant_tva, montant_ttc, notes: raw.notes_techniques ?? null }
 }

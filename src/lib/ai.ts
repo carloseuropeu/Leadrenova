@@ -1,4 +1,5 @@
 import type { Lead, LigneDevis } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 
 const ANTHROPIC_API = '/api/prospect'
 const MODEL = 'claude-sonnet-4-6'
@@ -7,7 +8,7 @@ const MODEL = 'claude-sonnet-4-6'
 function fallbackEmail(company: string): string {
   const slug = (company ?? '')
     .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove accents
     .replace(/['\s&()/.,]+/g, '')                     // remove common punctuation
     .replace(/[^a-z0-9-]/g, '')                        // keep alphanumeric + hyphens
     .replace(/-+/g, '-').replace(/^-|-$/g, '')         // trim hyphens
@@ -15,14 +16,56 @@ function fallbackEmail(company: string): string {
   return `contact@${slug}.fr`
 }
 
-// ── PROSPECTION ─────────────────────────────────────────────────
-export async function searchLeads(params: {
+// ── HELPERS: SITADEL + RECHERCHE ENTREPRISES ─────────────────────
+
+function extractCodePostal(zone: string): string | null {
+  return zone.match(/\b\d{5}\b/)?.[0] ?? zone.match(/\b\d{2,3}\b/)?.[0] ?? null
+}
+
+function scoreFromPermit(permit: Record<string, unknown>): number {
+  let score = 60
+  const surface = Number(permit.surface_m2) || 0
+  const type = String(permit.type_travaux || '').toLowerCase()
+  if (surface > 100) score += 10
+  if (surface > 500) score += 10
+  if (type.includes('rénovation') || type.includes('renovation')) score += 15
+  if (type.includes('extension') || type.includes('réhabilitation')) score += 10
+  return Math.min(score, 100)
+}
+
+async function enrichWithRechercheAPI(nom: string, departement: string): Promise<Partial<Lead>> {
+  try {
+    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(nom)}&departement=${departement}&per_page=1`
+    const res = await fetch(url, { signal: AbortSignal.timeout(5_000) })
+    if (!res.ok) return {}
+    const data = await res.json()
+    const r = data.results?.[0]
+    if (!r) return {}
+    const dirigeant = r.dirigeants?.[0]
+    return {
+      company:      r.nom_complet || nom,
+      address:      r.siege?.adresse || '',
+      city:         r.siege?.libelle_commune || '',
+      email:        r.siege?.email || undefined,
+      contact_name: dirigeant
+        ? `${dirigeant.prenom || ''} ${dirigeant.nom || ''}`.trim() || undefined
+        : undefined,
+      contact_role: dirigeant?.qualite || 'Dirigeant',
+      type:         r.activite_principale_libelle || undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+// ── PROSPECTION: CLAUDE ONLY (fallback) ─────────────────────────
+
+async function searchLeadsWithClaude(params: {
   zone: string
   targetType: string
   maxResults: number
   filters: string[]
 }): Promise<Partial<Lead>[]> {
-
   const prompt = `Trouve ${params.maxResults} ${params.targetType} réels dans la zone ${params.zone}, France.
 Filtres: ${params.filters.join(', ') || 'aucun'}.
 IMPORTANT: Pour chaque entreprise, l'email du contact décideur est OBLIGATOIRE. Si tu ne connais pas l'email exact, génère un email professionnel plausible basé sur le nom de l'entreprise (ex: contact@nomEntreprise.fr).
@@ -38,7 +81,7 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
       model: MODEL,
       max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
-    })
+    }),
   })
 
   if (!res.ok) throw new Error(`API error ${res.status}`)
@@ -49,7 +92,6 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
     const match = text.match(/\{[\s\S]*"leads"[\s\S]*\}/)
     const parsed = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
     const leads: Partial<Lead>[] = parsed.leads || []
-    // Garantit qu'un email est toujours présent
     return leads.map(l => ({
       ...l,
       email: l.email || fallbackEmail(l.company ?? ''),
@@ -57,6 +99,66 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
   } catch {
     return []
   }
+}
+
+// ── PROSPECTION: SITADEL → RECHERCHE ENTREPRISES → CLAUDE ────────
+export async function searchLeads(params: {
+  zone: string
+  targetType: string
+  maxResults: number
+  filters: string[]
+}): Promise<Partial<Lead>[]> {
+
+  const codePostal = extractCodePostal(params.zone)
+  let permitsLeads: Partial<Lead>[] = []
+
+  // Step 1 — query permis_construire by postal code
+  if (codePostal) {
+    const { data: permits } = await supabase
+      .from('permis_construire')
+      .select('*')
+      .eq('code_postal', codePostal)
+      .order('date_autorisation', { ascending: false })
+      .limit(params.maxResults * 2)
+
+    if (permits && permits.length > 0) {
+      // Step 2 — enrich each permit with API Recherche d'Entreprises
+      const enriched = await Promise.all(
+        permits.slice(0, params.maxResults).map(async (permit: Record<string, unknown>) => {
+          const dep   = String(permit.departement || codePostal.substring(0, 2))
+          const extra = await enrichWithRechercheAPI(String(permit.nom_petitionnaire || ''), dep)
+
+          const surface = permit.surface_m2 ? ` pour ${permit.surface_m2} m²` : ''
+          const date    = permit.date_autorisation ? ` le ${permit.date_autorisation}` : ''
+          const score   = scoreFromPermit(permit)
+
+          return {
+            company:      extra.company      || String(permit.nom_petitionnaire || 'Entreprise'),
+            type:         extra.type         || String(permit.type_travaux || 'Construction'),
+            address:      extra.address      || '',
+            city:         extra.city         || String(permit.commune || ''),
+            email:        extra.email        || fallbackEmail(String(permit.nom_petitionnaire || '')),
+            contact_name: extra.contact_name || undefined,
+            contact_role: extra.contact_role || 'Dirigeant',
+            opportunity:  `Permis de construire accordé${date}${surface}`,
+            renovation_score: score,
+            priority:     score >= 75,
+          } as Partial<Lead>
+        })
+      )
+      permitsLeads = enriched
+    }
+  }
+
+  // Step 3 — if DB fills quota, return immediately; otherwise supplement with Claude
+  if (permitsLeads.length >= params.maxResults) {
+    return permitsLeads.slice(0, params.maxResults)
+  }
+
+  const remaining  = params.maxResults - permitsLeads.length
+  const claudeLeads = await searchLeadsWithClaude({ ...params, maxResults: remaining })
+
+  return [...permitsLeads, ...claudeLeads].slice(0, params.maxResults)
 }
 
 // ── EMAIL IA ────────────────────────────────────────────────────

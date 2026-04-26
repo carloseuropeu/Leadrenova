@@ -18,7 +18,7 @@ const PLAN_FEATURES = {
   phone_reveal:       ['pro', 'business'],
   multi_region:       ['pro', 'business'],
 
-  // Business features (preview in pro)
+  // Business only features
   devis_generator:    ['pro', 'business'],
   factures:           ['business'],
   financial_dashboard:['business'],

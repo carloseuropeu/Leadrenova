@@ -1,7 +1,20 @@
+import { createClient } from '@supabase/supabase-js'
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Méthode non autorisée' })
   }
+
+  // Validate Supabase session token
+  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '')
+  if (!token) return res.status(401).json({ error: 'Unauthorized' })
+
+  const supabase = createClient(
+    process.env.SUPABASE_URL      || process.env.VITE_SUPABASE_URL      || '',
+    process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '',
+  )
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+  if (authError || !user) return res.status(401).json({ error: 'Unauthorized' })
 
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
@@ -15,15 +28,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Champs requis manquants : to, subject, body.' })
   }
 
-  // Adresse expéditrice — configurer RESEND_FROM_EMAIL dans les variables Vercel
-  // (domaine vérifié dans Resend Dashboard). Fallback: adresse de test Resend.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return res.status(400).json({ error: 'Adresse email invalide.' })
+  }
+
   if (!process.env.RESEND_FROM_EMAIL) {
-    console.warn('[api/send-email] RESEND_FROM_EMAIL non défini — utilisation du fallback onboarding@resend.dev (emails limités en production)')
+    console.warn('[api/send-email] RESEND_FROM_EMAIL non défini — fallback onboarding@resend.dev (emails limités en production)')
   }
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
   const fromLabel = fromName ? `${fromName} via LeadRénov` : 'LeadRénov'
 
-  // Convertir le texte brut en HTML minimal (sauts de ligne → <br>)
   const htmlBody = body
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

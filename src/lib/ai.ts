@@ -8,12 +8,24 @@ const MODEL = 'claude-sonnet-4-6'
 function fallbackEmail(company: string): string {
   const slug = (company ?? '')
     .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove accents
-    .replace(/['\s&()/.,]+/g, '')                     // remove common punctuation
-    .replace(/[^a-z0-9-]/g, '')                        // keep alphanumeric + hyphens
-    .replace(/-+/g, '-').replace(/^-|-$/g, '')         // trim hyphens
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/['\s&()/.,]+/g, '')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-').replace(/^-|-$/g, '')
     .substring(0, 40) || 'contact'
   return `contact@${slug}.fr`
+}
+
+// ── AUTH HEADERS ─────────────────────────────────────────────────
+// Attaches the current Supabase JWT to outgoing API calls so the
+// server-side auth guards can validate the request.
+async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session?.access_token) {
+    headers['Authorization'] = `Bearer ${session.access_token}`
+  }
+  return headers
 }
 
 // ── HELPERS: SITADEL + RECHERCHE ENTREPRISES ─────────────────────
@@ -25,21 +37,24 @@ function extractCodePostal(zone: string): string | null {
 function scoreFromPermit(permit: Record<string, unknown>): number {
   let score = 60
   const surface = Number(permit.surface_m2) || 0
-  const type = String(permit.type_travaux || '').toLowerCase()
+  const type    = String(permit.type_travaux || '').toLowerCase()
   if (surface > 100) score += 10
   if (surface > 500) score += 10
   if (type.includes('rénovation') || type.includes('renovation')) score += 15
-  if (type.includes('extension') || type.includes('réhabilitation')) score += 10
+  if (type.includes('extension')  || type.includes('réhabilitation')) score += 10
   return Math.min(score, 100)
 }
 
+// Fix #6 — AbortController instead of AbortSignal.timeout() for older browser compat
 async function enrichWithRechercheAPI(nom: string, departement: string): Promise<Partial<Lead>> {
+  const controller = new AbortController()
+  const timeoutId  = setTimeout(() => controller.abort(), 5000)
   try {
     const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(nom)}&departement=${departement}&per_page=1`
-    const res = await fetch(url, { signal: AbortSignal.timeout(5_000) })
+    const res = await fetch(url, { signal: controller.signal })
     if (!res.ok) return {}
     const data = await res.json()
-    const r = data.results?.[0]
+    const r    = data.results?.[0]
     if (!r) return {}
     const dirigeant = r.dirigeants?.[0]
     return {
@@ -55,7 +70,41 @@ async function enrichWithRechercheAPI(nom: string, departement: string): Promise
     }
   } catch {
     return {}
+  } finally {
+    clearTimeout(timeoutId)
   }
+}
+
+// Fix #8 — sequential with 100ms delay to avoid rate-limiting the public API
+async function enrichSequential(
+  permits: Record<string, unknown>[],
+  codePostal: string,
+): Promise<Partial<Lead>[]> {
+  const results: Partial<Lead>[] = []
+  for (let i = 0; i < permits.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 100))
+    const permit = permits[i]
+    const dep    = String(permit.departement || codePostal.substring(0, 2))
+    const extra  = await enrichWithRechercheAPI(String(permit.nom_petitionnaire || ''), dep)
+
+    const surface = permit.surface_m2 ? ` pour ${permit.surface_m2} m²` : ''
+    const date    = permit.date_autorisation ? ` le ${permit.date_autorisation}` : ''
+    const score   = scoreFromPermit(permit)
+
+    results.push({
+      company:          extra.company      || String(permit.nom_petitionnaire || 'Entreprise'),
+      type:             extra.type         || String(permit.type_travaux || 'Construction'),
+      address:          extra.address      || '',
+      city:             extra.city         || String(permit.commune || ''),
+      email:            extra.email        || fallbackEmail(String(permit.nom_petitionnaire || '')),
+      contact_name:     extra.contact_name || undefined,
+      contact_role:     extra.contact_role || 'Dirigeant',
+      opportunity:      `Permis de construire accordé${date}${surface}`,
+      renovation_score: score,
+      priority:         score >= 75,
+    } as Partial<Lead>)
+  }
+  return results
 }
 
 // ── PROSPECTION: CLAUDE ONLY (fallback) ─────────────────────────
@@ -76,7 +125,7 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
 
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 4096,
@@ -89,7 +138,7 @@ Réponds UNIQUEMENT en JSON valide sans markdown:
   const text = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') || ''
 
   try {
-    const match = text.match(/\{[\s\S]*"leads"[\s\S]*\}/)
+    const match  = text.match(/\{[\s\S]*"leads"[\s\S]*\}/)
     const parsed = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
     const leads: Partial<Lead>[] = parsed.leads || []
     return leads.map(l => ({
@@ -122,51 +171,31 @@ export async function searchLeads(params: {
       .limit(params.maxResults * 2)
 
     if (permits && permits.length > 0) {
-      // Step 2 — enrich each permit with API Recherche d'Entreprises
-      const enriched = await Promise.all(
-        permits.slice(0, params.maxResults).map(async (permit: Record<string, unknown>) => {
-          const dep   = String(permit.departement || codePostal.substring(0, 2))
-          const extra = await enrichWithRechercheAPI(String(permit.nom_petitionnaire || ''), dep)
-
-          const surface = permit.surface_m2 ? ` pour ${permit.surface_m2} m²` : ''
-          const date    = permit.date_autorisation ? ` le ${permit.date_autorisation}` : ''
-          const score   = scoreFromPermit(permit)
-
-          return {
-            company:      extra.company      || String(permit.nom_petitionnaire || 'Entreprise'),
-            type:         extra.type         || String(permit.type_travaux || 'Construction'),
-            address:      extra.address      || '',
-            city:         extra.city         || String(permit.commune || ''),
-            email:        extra.email        || fallbackEmail(String(permit.nom_petitionnaire || '')),
-            contact_name: extra.contact_name || undefined,
-            contact_role: extra.contact_role || 'Dirigeant',
-            opportunity:  `Permis de construire accordé${date}${surface}`,
-            renovation_score: score,
-            priority:     score >= 75,
-          } as Partial<Lead>
-        })
-      )
-      permitsLeads = enriched
+      // Step 2 — enrich sequentially (avoids rate-limiting the public API)
+      permitsLeads = await enrichSequential(permits.slice(0, params.maxResults), codePostal)
     }
   }
 
-  // Step 3 — if DB fills quota, return immediately; otherwise supplement with Claude
+  // Step 3 — DB fills quota → return; otherwise supplement with Claude
   if (permitsLeads.length >= params.maxResults) {
     return permitsLeads.slice(0, params.maxResults)
   }
 
-  const remaining  = params.maxResults - permitsLeads.length
+  const remaining   = params.maxResults - permitsLeads.length
   const claudeLeads = await searchLeadsWithClaude({ ...params, maxResults: remaining })
 
   return [...permitsLeads, ...claudeLeads].slice(0, params.maxResults)
 }
 
 // ── EMAIL IA ────────────────────────────────────────────────────
-export async function generateEmail(lead: Partial<Lead>, profile: { full_name: string; metiers: string[]; zone_principale: string }): Promise<{ subject: string; body: string }> {
+export async function generateEmail(
+  lead: Partial<Lead>,
+  profile: { full_name: string; metiers: string[]; zone_principale: string },
+): Promise<{ subject: string; body: string }> {
 
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 1000,
@@ -175,9 +204,9 @@ Rédige des emails de prospection professionnels en français, courts (150-200 m
 Réponds UNIQUEMENT en JSON: {"subject":"...","body":"..."}`,
       messages: [{
         role: 'user',
-        content: `Email pour: ${lead.company} | Contact: ${lead.contact_name || 'Directeur(trice)'} | Ville: ${lead.city} | Opportunité: ${lead.opportunity || 'rénovation'}`
-      }]
-    })
+        content: `Email pour: ${lead.company} | Contact: ${lead.contact_name || 'Directeur(trice)'} | Ville: ${lead.city} | Opportunité: ${lead.opportunity || 'rénovation'}`,
+      }],
+    }),
   })
 
   if (!res.ok) throw new Error(`API error ${res.status}`)
@@ -199,7 +228,7 @@ export async function sendEmail(params: {
 }): Promise<{ id: string }> {
   const res = await fetch('/api/send-email', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body: JSON.stringify(params),
   })
   if (!res.ok) {
@@ -223,7 +252,7 @@ export async function generateDevis(
 }> {
   const res = await fetch(ANTHROPIC_API, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 2000,
@@ -251,7 +280,7 @@ Réponds UNIQUEMENT en JSON valide sans markdown :
   }
 
   const lignes: LigneDevis[] = (raw.lignes ?? []).map((l, i) => ({
-    id: String(i + 1),
+    id:               String(i + 1),
     description:      l.description      ?? '',
     quantite:         Number(l.quantite)  || 0,
     unite:            l.unite             ?? 'u',

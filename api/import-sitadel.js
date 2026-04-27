@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js'
 // Vercel Pro: 60s execution budget. On Hobby plan the default 10s limit applies.
 export const config = { maxDuration: 60 }
 
-const DATAGOUV_DATASET_ID = '55218fa4c751df0b3f494069'
 const MAX_LINES  = 5000   // lines per cron run — full dataset covered incrementally over months
 const BATCH_SIZE = 500
 
@@ -75,26 +74,6 @@ function buildRecord(cols, col, importMonth) {
   }
 }
 
-// ── CSV DISCOVERY VIA DATA.GOUV.FR ───────────────────────────────
-
-async function discoverCsvUrl() {
-  if (process.env.SITADEL_CSV_URL) return process.env.SITADEL_CSV_URL
-
-  const apiUrl = `https://www.data.gouv.fr/api/1/datasets/${DATAGOUV_DATASET_ID}/`
-  const res = await fetch(apiUrl, {
-    headers: { 'User-Agent': 'LeadRenov/1.0 (import bot)' },
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!res.ok) throw new Error(`data.gouv.fr API HTTP ${res.status}`)
-
-  const dataset   = await res.json()
-  const resources = (dataset.resources || [])
-    .filter(r => (r.format || '').toLowerCase() === 'csv')
-    .sort((a, b) => new Date(b.last_modified || 0) - new Date(a.last_modified || 0))
-
-  if (!resources.length) throw new Error('Aucun resource CSV dans le dataset data.gouv.fr 55218fa4c751df0b3f494069')
-  return resources[0].url
-}
 
 // ── MAIN HANDLER ─────────────────────────────────────────────────
 
@@ -129,9 +108,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ── 1. Discover CSV URL ────────────────────────────────────
-    console.log('[import-sitadel] Discovering CSV URL...')
-    const csvUrl = await discoverCsvUrl()
+    // ── 1. Discover CSV URL via data.gouv.fr API ───────────────
+    const datasetUrl = 'https://www.data.gouv.fr/api/1/datasets/55218fa4c751df0b3f494069/'
+    const datasetRes = await fetch(datasetUrl)
+    const dataset    = await datasetRes.json()
+    const csvResource = dataset.resources?.find(r =>
+      r.format?.toLowerCase() === 'csv' && r.url
+    )
+    if (!csvResource) throw new Error('CSV resource not found in dataset')
+    const csvUrl = csvResource.url
     console.log('[import-sitadel] Streaming from:', csvUrl)
 
     const csvRes = await fetch(csvUrl, {

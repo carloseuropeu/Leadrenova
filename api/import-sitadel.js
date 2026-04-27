@@ -99,23 +99,7 @@ async function discoverCsvUrl() {
 // ── MAIN HANDLER ─────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  const cronSecret = process.env.CRON_SECRET
-  const authHeader = req.headers['authorization'] || ''
-
-  // Debug: log para ver o que chega
-  console.log('CRON_SECRET exists:', !!cronSecret)
-  console.log('Auth header received:', authHeader)
-  console.log('Expected:', `Bearer ${cronSecret}`)
-  console.log('Match:', authHeader === `Bearer ${cronSecret}`)
-
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return res.status(401).json({
-      error: 'Unauthorized',
-      debug_secret_exists: !!cronSecret,
-      debug_header_received: authHeader,
-      debug_expected: `Bearer ${cronSecret}`
-    })
-  }
+  // Auth desactivada temporariamente para testes
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY

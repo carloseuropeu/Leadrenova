@@ -113,9 +113,23 @@ export default async function handler(req, res) {
     const datasetRes = await fetch(datasetUrl)
     const dataset    = await datasetRes.json()
     const csvResource = dataset.resources?.find(r =>
-      r.format?.toLowerCase() === 'csv' && r.url
+      r.format?.toUpperCase() === 'CSV' ||
+      r.mime?.includes('csv') ||
+      r.url?.includes('.csv')
     )
-    if (!csvResource) throw new Error('CSV resource not found in dataset')
+
+    // Debug: se ainda não encontrar, retorna os recursos disponíveis
+    if (!csvResource) {
+      return res.status(500).json({
+        error: 'CSV resource not found in dataset',
+        available_resources: dataset.resources?.map(r => ({
+          format: r.format,
+          mime: r.mime,
+          title: r.title,
+          url: r.url?.substring(0, 80)
+        }))
+      })
+    }
     const csvUrl = csvResource.url
     console.log('[import-sitadel] Streaming from:', csvUrl)
 

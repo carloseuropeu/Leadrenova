@@ -99,10 +99,10 @@ async function discoverCsvUrl() {
 // ── MAIN HANDLER ─────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  const authHeader = req.headers['authorization'] || ''
-  const cronSecret = process.env.CRON_SECRET
+  const secret   = req.headers['authorization']?.replace('Bearer ', '').trim()
+  const expected = process.env.CRON_SECRET?.trim()
 
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!expected || secret !== expected) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 

@@ -167,15 +167,18 @@ export default async function handler(req, res) {
       if (!line.trim()) return
 
       if (!headerDone) {
-        const clean = line.replace(/^﻿/, '') // strip BOM
-        sep        = detectSeparator(clean)
-        col        = buildColMap(parseCsvLine(clean, sep))
-        headerDone = true
+        const clean   = line.replace(/^﻿/, '') // strip BOM
+        sep           = detectSeparator(clean)
+        const headers = parseCsvLine(clean, sep)
+        col           = buildColMap(headers)
+        headerDone    = true
+        console.log('CSV headers found:', headers.slice(0, 20))
         return
       }
 
       lineCount++
-      const cols   = parseCsvLine(line, sep)
+      const cols = parseCsvLine(line, sep)
+      if (lineCount === 1) console.log('First row sample:', cols)
       if (cols.length < 3) { skipped++; return }
 
       const record = buildRecord(cols, col, importMonth)

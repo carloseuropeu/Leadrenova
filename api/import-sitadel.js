@@ -89,6 +89,18 @@ export default async function handler(req, res) {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
+  // ── Optional reset: ?reset=true apaga todos os registos antes de importar
+  if (req.query?.reset === 'true') {
+    const { error: deleteError } = await supabase
+      .from('permis_construire')
+      .delete()
+      .neq('id', 0)
+    if (deleteError) {
+      return res.status(500).json({ error: 'Reset failed: ' + deleteError.message })
+    }
+    console.log('[import-sitadel] Table reset — all records deleted')
+  }
+
   // ── Guard: skip if this month was already imported ─────────────
   const now         = new Date()
   const importMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`

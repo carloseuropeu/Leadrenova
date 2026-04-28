@@ -109,7 +109,7 @@ export default async function handler(req, res) {
 
   try {
     // ── 1. Discover CSV URL via data.gouv.fr API ───────────────
-    const datasetUrl = 'https://www.data.gouv.fr/api/1/datasets/55218fa4c751df0b3f494069/'
+    const datasetUrl = 'https://www.data.gouv.fr/api/1/datasets/liste-des-permis-de-construire-et-autres-autorisations-durbanisme/'
     const datasetRes = await fetch(datasetUrl)
     const dataset    = await datasetRes.json()
     const csvResource = dataset.resources?.find(r =>

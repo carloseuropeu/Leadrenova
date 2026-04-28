@@ -42,14 +42,14 @@ function findCol(headers, candidates) {
 
 function buildColMap(headers) {
   return {
-    code_postal:       findCol(headers, ['code_postal', 'cp', 'codepostal', 'cod_postal']),
-    commune:           findCol(headers, ['nom_com', 'libelle_commune', 'lib_com', 'commune']),
-    departement:       findCol(headers, ['dep', 'departement', 'num_dep', 'code_dep']),
-    type_travaux:      findCol(headers, ['type_autorisation', 'type_decis', 'nature_projet', 'type_travaux', 'nature_travaux']),
-    surface_m2:        findCol(headers, ['surface', 'surface_m2', 'shon', 'surface_totale', 'surf_loc']),
-    nom_petitionnaire: findCol(headers, ['nom_petitionnaire', 'petitionnaire', 'demandeur', 'nom_moa', 'raison_sociale']),
-    date_autorisation: findCol(headers, ['date_auth', 'date_autorisation', 'dat_auth', 'date_decision', 'date_real']),
-    depcom:            findCol(headers, ['depcom', 'code_insee', 'insee', 'cod_dep_com', 'dep_com']),
+    commune:           findCol(headers, ['NOM_COM', 'LIBELLE_COM', 'LIB_COM', 'COMMUNE', 'nom_com', 'libelle_commune']),
+    code_postal:       findCol(headers, ['CP', 'CODE_POSTAL', 'COD_POSTAL', 'DEPCOM', 'DEP_COM', 'code_postal', 'cp']),
+    departement:       findCol(headers, ['DEP', 'NUM_DEP', 'CODE_DEP', 'DEPARTEMENT', 'dep', 'departement']),
+    type_travaux:      findCol(headers, ['TYPE_AUTORISATION', 'TYPE_DECIS', 'NATURE_PROJET', 'TYPE_TRAVAUX', 'TYP_CONST', 'type_autorisation', 'nature_travaux']),
+    surface_m2:        findCol(headers, ['SURFACE', 'SHO', 'SHON', 'SURFACE_M2', 'SU_LOC', 'SURF_LOC', 'surface', 'surface_totale']),
+    nom_petitionnaire: findCol(headers, ['NOM_MOA', 'RAISON_SOCIALE', 'NOM_PETITIONNAIRE', 'PETITIONNAIRE', 'nom_petitionnaire', 'demandeur']),
+    date_autorisation: findCol(headers, ['DATE_AUTH', 'DATE_REAL', 'DATE_DECISION', 'DAT_AUTH', 'DATE_AUTORISATION', 'date_auth', 'date_real']),
+    depcom:            findCol(headers, ['DEPCOM', 'DEP_COM', 'CODE_INSEE', 'INSEE', 'depcom', 'cod_dep_com']),
   }
 }
 
@@ -172,7 +172,7 @@ export default async function handler(req, res) {
         const headers = parseCsvLine(clean, sep)
         col           = buildColMap(headers)
         headerDone    = true
-        console.log('CSV headers found:', headers.slice(0, 20))
+        console.log('CSV headers found:', headers)
         return
       }
 

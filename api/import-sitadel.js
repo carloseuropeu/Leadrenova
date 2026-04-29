@@ -43,13 +43,13 @@ function findCol(headers, candidates) {
 function buildColMap(headers) {
   const h = headers.map(x => x.trim().toLowerCase())
   return {
-    commune:           h.indexOf('nom_com'),
-    code_postal:       h.indexOf('cp_moa') !== -1 ? h.indexOf('cp_moa') : h.indexOf('com'),
-    departement:       h.indexOf('dep'),
-    type_travaux:      h.indexOf('type_autorisation'),
-    surface_m2:        h.indexOf('su_loc') !== -1 ? h.indexOf('su_loc') : -1,
-    nom_petitionnaire: h.indexOf('nom_moa'),
-    date_autorisation: h.findIndex(x => x.includes('date')),
+    commune:           h.indexOf('adr_localite_ter'),
+    code_postal:       h.indexOf('adr_codpost_ter'),
+    departement:       h.indexOf('dep_code'),
+    type_travaux:      h.indexOf('sec_cadastre1'),
+    surface_m2:        h.indexOf('superficie_terrain'),
+    nom_petitionnaire: h.indexOf('denom_dem'),
+    date_autorisation: h.indexOf('date_reelle_autorisation'),
   }
 }
 

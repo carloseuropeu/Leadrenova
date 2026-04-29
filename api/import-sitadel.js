@@ -169,9 +169,13 @@ export default async function handler(req, res) {
       console.log('Sample record to insert:', JSON.stringify(batch[0]))
       const { error } = await supabase
         .from('permis_construire')
-        .upsert(batch, { onConflict: 'nom_petitionnaire,date_autorisation,commune', ignoreDuplicates: true })
-      if (error) console.error('[import-sitadel] upsert error:', error.message)
-      else inserted += batch.length
+        .insert(batch)
+
+      if (error) {
+        console.error('[import-sitadel] Insert error:', error.message, error.details, error.hint)
+      } else {
+        inserted += batch.length
+      }
       batch = []
     }
 

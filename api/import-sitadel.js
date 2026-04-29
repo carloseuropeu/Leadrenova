@@ -41,18 +41,16 @@ function findCol(headers, candidates) {
 }
 
 function buildColMap(headers) {
-  const map = {
-    commune:           findCol(headers, ['NOM_COM', 'LIBELLE_COM', 'LIB_COM', 'COM_LIBELLE', 'COMMUNE', 'nom_com', 'libelle_commune']),
-    code_postal:       findCol(headers, ['CP', 'CODE_POSTAL', 'COD_POSTAL', 'code_postal']),
-    departement:       findCol(headers, ['DEP', 'DEP_CODE', 'NUM_DEP', 'CODE_DEP', 'DEPARTEMENT', 'dep']),
-    type_travaux:      findCol(headers, ['TYPE_AUTORISATION', 'TYPE_AUT', 'TYPE_DECIS', 'NATURE_AUTORISATION', 'NATURE_PROJET', 'TYP_CONST', 'CATEG', 'type_autorisation']),
-    surface_m2:        findCol(headers, ['SHO', 'SURFACE', 'SHON', 'SU_REELLE', 'SU_LOC', 'SURF_LOC', 'SURFACE_M2', 'surface']),
-    nom_petitionnaire: findCol(headers, ['MOA_LIB', 'MOA_LIBELLE', 'MOA_NOM', 'NOM_MOA', 'RAISON_SOCIALE', 'NOM_PETITIONNAIRE', 'PETITIONNAIRE', 'NOM_BENEF', 'BENEFICIAIRE', 'MAITRE_OUVRAGE', 'PROG_NOM', 'NOM_PROGRAMME', 'nom_petitionnaire', 'demandeur']),
-    date_autorisation: findCol(headers, ['DATE_AUTORISATION', 'DATE_AUTH', 'DATE_REAL', 'DATE_DECISION', 'DAT_AUTH', 'date_auth', 'date_real']),
-    depcom:            findCol(headers, ['DEPCOM', 'DEP_COM', 'COM_CODE', 'CODE_INSEE', 'INSEE', 'depcom', 'cod_dep_com']),
+  const h = headers.map(x => x.trim().toLowerCase())
+  return {
+    commune:           h.indexOf('nom_com'),
+    code_postal:       h.indexOf('cp_moa') !== -1 ? h.indexOf('cp_moa') : h.indexOf('com'),
+    departement:       h.indexOf('dep'),
+    type_travaux:      h.indexOf('type_autorisation'),
+    surface_m2:        h.indexOf('su_loc') !== -1 ? h.indexOf('su_loc') : -1,
+    nom_petitionnaire: h.indexOf('nom_moa'),
+    date_autorisation: h.findIndex(x => x.includes('date')),
   }
-  console.log('Column map result:', map)
-  return map
 }
 
 function buildRecord(cols, col, importMonth) {
@@ -187,6 +185,7 @@ export default async function handler(req, res) {
         const headers = parseCsvLine(clean, sep)
         col           = buildColMap(headers)
         headerDone    = true
+        console.log('Headers lowercase:', headers.map(x => x.trim().toLowerCase()))
         console.log('CSV headers found:', headers)
         return
       }

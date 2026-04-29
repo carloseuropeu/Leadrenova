@@ -60,7 +60,7 @@ function buildRecord(cols, col, importMonth) {
   }
 
   const commune = col.commune >= 0 ? cols[col.commune] || null : null
-  if (!commune) return null
+    || (col.nom_petitionnaire >= 0 ? cols[21] || null : null)
 
   return {
     code_postal:       codePostal || null,
@@ -169,7 +169,7 @@ export default async function handler(req, res) {
       console.log('Sample record to insert:', JSON.stringify(batch[0]))
       const { error } = await supabase
         .from('permis_construire')
-        .insert(batch)
+        .upsert(batch, { onConflict: 'nom_petitionnaire,date_autorisation,commune', ignoreDuplicates: true })
       if (error) console.error('[import-sitadel] upsert error:', error.message)
       else inserted += batch.length
       batch = []

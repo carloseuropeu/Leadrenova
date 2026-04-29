@@ -168,6 +168,7 @@ export default async function handler(req, res) {
 
     const flushBatch = async () => {
       if (!batch.length) return
+      console.log('Sample record to insert:', JSON.stringify(batch[0]))
       const { error } = await supabase
         .from('permis_construire')
         .insert(batch)

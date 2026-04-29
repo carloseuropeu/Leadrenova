@@ -41,16 +41,18 @@ function findCol(headers, candidates) {
 }
 
 function buildColMap(headers) {
-  return {
-    commune:           findCol(headers, ['NOM_COM', 'LIBELLE_COM', 'LIB_COM', 'COMMUNE', 'nom_com', 'libelle_commune']),
-    code_postal:       findCol(headers, ['CP', 'CODE_POSTAL', 'COD_POSTAL', 'DEPCOM', 'DEP_COM', 'code_postal', 'cp']),
-    departement:       findCol(headers, ['DEP', 'NUM_DEP', 'CODE_DEP', 'DEPARTEMENT', 'dep', 'departement']),
-    type_travaux:      findCol(headers, ['TYPE_AUTORISATION', 'TYPE_DECIS', 'NATURE_PROJET', 'TYPE_TRAVAUX', 'TYP_CONST', 'type_autorisation', 'nature_travaux']),
-    surface_m2:        findCol(headers, ['SURFACE', 'SHO', 'SHON', 'SURFACE_M2', 'SU_LOC', 'SURF_LOC', 'surface', 'surface_totale']),
-    nom_petitionnaire: findCol(headers, ['NOM_MOA', 'RAISON_SOCIALE', 'NOM_PETITIONNAIRE', 'PETITIONNAIRE', 'nom_petitionnaire', 'demandeur']),
-    date_autorisation: findCol(headers, ['DATE_AUTH', 'DATE_REAL', 'DATE_DECISION', 'DAT_AUTH', 'DATE_AUTORISATION', 'date_auth', 'date_real']),
-    depcom:            findCol(headers, ['DEPCOM', 'DEP_COM', 'CODE_INSEE', 'INSEE', 'depcom', 'cod_dep_com']),
+  const map = {
+    commune:           findCol(headers, ['NOM_COM', 'LIBELLE_COM', 'LIB_COM', 'COM_LIBELLE', 'COMMUNE', 'nom_com', 'libelle_commune']),
+    code_postal:       findCol(headers, ['CP', 'CODE_POSTAL', 'COD_POSTAL', 'code_postal']),
+    departement:       findCol(headers, ['DEP', 'DEP_CODE', 'NUM_DEP', 'CODE_DEP', 'DEPARTEMENT', 'dep']),
+    type_travaux:      findCol(headers, ['TYPE_AUTORISATION', 'TYPE_AUT', 'TYPE_DECIS', 'NATURE_AUTORISATION', 'NATURE_PROJET', 'TYP_CONST', 'CATEG', 'type_autorisation']),
+    surface_m2:        findCol(headers, ['SHO', 'SURFACE', 'SHON', 'SU_REELLE', 'SU_LOC', 'SURF_LOC', 'SURFACE_M2', 'surface']),
+    nom_petitionnaire: findCol(headers, ['MOA_LIB', 'MOA_LIBELLE', 'MOA_NOM', 'NOM_MOA', 'RAISON_SOCIALE', 'NOM_PETITIONNAIRE', 'PETITIONNAIRE', 'NOM_BENEF', 'BENEFICIAIRE', 'MAITRE_OUVRAGE', 'PROG_NOM', 'NOM_PROGRAMME', 'nom_petitionnaire', 'demandeur']),
+    date_autorisation: findCol(headers, ['DATE_AUTORISATION', 'DATE_AUTH', 'DATE_REAL', 'DATE_DECISION', 'DAT_AUTH', 'date_auth', 'date_real']),
+    depcom:            findCol(headers, ['DEPCOM', 'DEP_COM', 'COM_CODE', 'CODE_INSEE', 'INSEE', 'depcom', 'cod_dep_com']),
   }
+  console.log('Column map result:', map)
+  return map
 }
 
 function buildRecord(cols, col, importMonth) {
@@ -59,16 +61,16 @@ function buildRecord(cols, col, importMonth) {
     codePostal = (cols[col.depcom] || '').padStart(5, '0').substring(0, 2)
   }
 
-  const nomPetitionnaire = col.nom_petitionnaire >= 0 ? cols[col.nom_petitionnaire] : null
-  if (!nomPetitionnaire) return null
+  const commune = col.commune >= 0 ? cols[col.commune] || null : null
+  if (!commune) return null
 
   return {
     code_postal:       codePostal || null,
-    commune:           col.commune           >= 0 ? cols[col.commune]           || null : null,
+    commune,
     departement:       col.departement       >= 0 ? cols[col.departement]       || null : null,
     type_travaux:      col.type_travaux      >= 0 ? cols[col.type_travaux]      || null : null,
     surface_m2:        col.surface_m2        >= 0 ? parseFloat(cols[col.surface_m2]) || null : null,
-    nom_petitionnaire: nomPetitionnaire,
+    nom_petitionnaire: col.nom_petitionnaire >= 0 ? cols[col.nom_petitionnaire] || null : null,
     date_autorisation: col.date_autorisation >= 0 ? cols[col.date_autorisation] || null : null,
     processed_month:   importMonth,
   }
@@ -168,7 +170,7 @@ export default async function handler(req, res) {
       if (!batch.length) return
       const { error } = await supabase
         .from('permis_construire')
-        .upsert(batch, { onConflict: 'nom_petitionnaire,date_autorisation,commune', ignoreDuplicates: true })
+        .insert(batch)
       if (error) console.error('[import-sitadel] upsert error:', error.message)
       else inserted += batch.length
       batch = []

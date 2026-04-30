@@ -34,6 +34,11 @@ function extractCodePostal(zone: string): string | null {
   return zone.match(/\b\d{5}\b/)?.[0] ?? zone.match(/\b\d{2,3}\b/)?.[0] ?? null
 }
 
+function extractCommune(zone: string): string | null {
+  const word = zone.replace(/\b\d{2,5}\b/g, '').trim().split(/[\s,]+/).find(w => w.length > 2)
+  return word ?? null
+}
+
 function scoreFromPermit(permit: Record<string, unknown>): number {
   let score = 60
   const surface = Number(permit.surface_m2) || 0
@@ -107,50 +112,7 @@ async function enrichSequential(
   return results
 }
 
-// ── PROSPECTION: CLAUDE ONLY (fallback) ─────────────────────────
-
-async function searchLeadsWithClaude(params: {
-  zone: string
-  targetType: string
-  maxResults: number
-  filters: string[]
-}): Promise<Partial<Lead>[]> {
-  const prompt = `Trouve ${params.maxResults} ${params.targetType} réels dans la zone ${params.zone}, France.
-Filtres: ${params.filters.join(', ') || 'aucun'}.
-IMPORTANT: Pour chaque entreprise, l'email du contact décideur est OBLIGATOIRE. Si tu ne connais pas l'email exact, génère un email professionnel plausible basé sur le nom de l'entreprise (ex: contact@nomEntreprise.fr).
-Pour chaque résultat inclus: nom entreprise, adresse complète, ville, site web, contact décideur (nom, rôle, email, téléphone), taille équipe.
-Score potentiel rénovation 0-100. Marque priority: true si score >= 75.
-Réponds UNIQUEMENT en JSON valide sans markdown:
-{"leads":[{"company":"Immobilier Martin","type":"Agence immobilière","contact_name":"Sophie Martin","contact_role":"Directrice","email":"contact@immobiliermartin.fr","phone":"01 23 45 67 89","website":"https://immobiliermartin.fr","address":"12 rue de la Paix","city":"Paris","employees":"5-10","renovation_score":85,"opportunity":"Portefeuille de 200 appartements anciens nécessitant rénovation énergétique","priority":true}]}`
-
-  const res = await fetch(ANTHROPIC_API, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-
-  if (!res.ok) throw new Error(`API error ${res.status}`)
-  const data = await res.json()
-  const text = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') || ''
-
-  try {
-    const match  = text.match(/\{[\s\S]*"leads"[\s\S]*\}/)
-    const parsed = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
-    const leads: Partial<Lead>[] = parsed.leads || []
-    return leads.map(l => ({
-      ...l,
-      email: l.email || fallbackEmail(l.company ?? ''),
-    }))
-  } catch {
-    return []
-  }
-}
-
-// ── PROSPECTION: SITADEL → RECHERCHE ENTREPRISES → CLAUDE ────────
+// ── PROSPECTION: SITADEL → RECHERCHE ENTREPRISES ─────────────────
 export async function searchLeads(params: {
   zone: string
   targetType: string
@@ -159,32 +121,38 @@ export async function searchLeads(params: {
 }): Promise<Partial<Lead>[]> {
 
   const codePostal = extractCodePostal(params.zone)
-  let permitsLeads: Partial<Lead>[] = []
+  const commune    = extractCommune(params.zone)
 
-  // Step 1 — query permis_construire by postal code
+  let permits: Record<string, unknown>[] = []
+
+  // Step 1 — query by code_postal
   if (codePostal) {
-    const { data: permits } = await supabase
+    const { data } = await supabase
       .from('permis_construire')
       .select('*')
       .eq('code_postal', codePostal)
       .order('date_autorisation', { ascending: false })
       .limit(params.maxResults * 2)
-
-    if (permits && permits.length > 0) {
-      // Step 2 — enrich sequentially (avoids rate-limiting the public API)
-      permitsLeads = await enrichSequential(permits.slice(0, params.maxResults), codePostal)
-    }
+    if (data?.length) permits = data
   }
 
-  // Step 3 — DB fills quota → return; otherwise supplement with Claude
-  if (permitsLeads.length >= params.maxResults) {
-    return permitsLeads.slice(0, params.maxResults)
+  // Step 2 — supplement with commune search if not enough results
+  if (permits.length < params.maxResults && commune) {
+    const existing = new Set(permits.map((p: any) => p.id))
+    const { data } = await supabase
+      .from('permis_construire')
+      .select('*')
+      .ilike('commune', `%${commune}%`)
+      .order('date_autorisation', { ascending: false })
+      .limit(params.maxResults * 2)
+    if (data) permits = [...permits, ...data.filter((p: any) => !existing.has(p.id))]
   }
 
-  const remaining   = params.maxResults - permitsLeads.length
-  const claudeLeads = await searchLeadsWithClaude({ ...params, maxResults: remaining })
+  // No real data found — return empty rather than inventing leads
+  if (permits.length === 0) return []
 
-  return [...permitsLeads, ...claudeLeads].slice(0, params.maxResults)
+  // Step 3 — enrich with recherche-entreprises API
+  return enrichSequential(permits.slice(0, params.maxResults), codePostal ?? '')
 }
 
 // ── EMAIL IA ────────────────────────────────────────────────────

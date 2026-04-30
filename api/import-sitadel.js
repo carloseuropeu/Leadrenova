@@ -53,7 +53,7 @@ function buildColMap(headers) {
   }
 }
 
-function buildRecord(cols, col, importMonth) {
+function buildRecord(cols, col) {
   let codePostal = col.code_postal >= 0 ? cols[col.code_postal] : null
   if (!codePostal && col.depcom >= 0) {
     codePostal = (cols[col.depcom] || '').padStart(5, '0').substring(0, 2)
@@ -70,7 +70,6 @@ function buildRecord(cols, col, importMonth) {
     surface_m2:        col.surface_m2        >= 0 ? parseFloat(cols[col.surface_m2]) || null : null,
     nom_petitionnaire: col.nom_petitionnaire >= 0 ? cols[col.nom_petitionnaire] || null : null,
     date_autorisation: col.date_autorisation >= 0 ? cols[col.date_autorisation] || null : null,
-    processed_month:   importMonth,
   }
 }
 
@@ -105,10 +104,11 @@ export default async function handler(req, res) {
   const now         = new Date()
   const importMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
   const { count } = await supabase
     .from('permis_construire')
     .select('id', { count: 'exact', head: true })
-    .eq('processed_month', importMonth)
+    .gte('created_at', startOfMonth)
 
   if (count && count > 0) {
     console.log(`[import-sitadel] ${importMonth} déjà importé (${count} enregistrements)`)
@@ -199,7 +199,7 @@ export default async function handler(req, res) {
       if (lineCount === 1) console.log('First row sample:', cols)
       if (cols.length < 3) { skipped++; return }
 
-      const record = buildRecord(cols, col, importMonth)
+      const record = buildRecord(cols, col)
       if (!record) { skipped++; return }
 
       batch.push(record)

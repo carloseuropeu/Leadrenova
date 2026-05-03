@@ -14,7 +14,109 @@ async function authHeaders(): Promise<Record<string, string>> {
   return headers
 }
 
-// ── PROSPECTION IA ───────────────────────────────────────────────
+// ── HELPERS: SITADEL → LEADS ─────────────────────────────────────
+
+function fallbackEmail(company: string): string {
+  const slug = (company ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/['\s&()/.,]+/g, '')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-').replace(/^-|-$/g, '')
+    .substring(0, 40) || 'contact'
+  return `contact@${slug}.fr`
+}
+
+function extractCodePostal(zone: string): string | null {
+  return zone.match(/\b\d{5}\b/)?.[0] ?? zone.match(/\b\d{2,3}\b/)?.[0] ?? null
+}
+
+function extractCommune(zone: string): string | null {
+  const word = zone.replace(/\b\d{2,5}\b/g, '').trim().split(/[\s,]+/).find(w => w.length > 2)
+  return word ?? null
+}
+
+function scoreFromPermit(permit: Record<string, unknown>): number {
+  let score = 60
+  const surface = Number(permit.surface_m2) || 0
+  const type    = String(permit.type_travaux || '').toLowerCase()
+  if (surface > 100) score += 10
+  if (surface > 500) score += 10
+  if (type.includes('rénovation') || type.includes('renovation')) score += 15
+  if (type.includes('extension')  || type.includes('réhabilitation')) score += 10
+  return Math.min(score, 100)
+}
+
+async function enrichWithRechercheAPI(nom: string, departement: string): Promise<Partial<Lead>> {
+  const controller = new AbortController()
+  const timeoutId  = setTimeout(() => controller.abort(), 5000)
+  try {
+    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(nom)}&departement=${departement}&per_page=1`
+    const res = await fetch(url, { signal: controller.signal })
+    if (!res.ok) return {}
+    const data = await res.json()
+    const r    = data.results?.[0]
+    if (!r) return {}
+    const dirigeant = r.dirigeants?.[0]
+    return {
+      company:      r.nom_complet || nom,
+      address:      r.siege?.adresse || '',
+      city:         r.siege?.libelle_commune || '',
+      email:        r.siege?.email || undefined,
+      contact_name: dirigeant
+        ? `${dirigeant.prenom || ''} ${dirigeant.nom || ''}`.trim() || undefined
+        : undefined,
+      contact_role: dirigeant?.qualite || 'Dirigeant',
+      type:         r.activite_principale_libelle || undefined,
+    }
+  } catch {
+    return {}
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+// Sequential enrichment with 100 ms delay to avoid API rate-limiting.
+// Priority for email: pre-enriched permit.email → recherche-entreprises → fallback slug.
+async function enrichSequential(
+  permits: Record<string, unknown>[],
+  codePostal: string,
+): Promise<Partial<Lead>[]> {
+  const results: Partial<Lead>[] = []
+  for (let i = 0; i < permits.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 100))
+    const permit = permits[i]
+    const dep    = String(permit.departement || codePostal.substring(0, 2))
+    const extra  = await enrichWithRechercheAPI(String(permit.nom_petitionnaire || ''), dep)
+
+    const surface = permit.surface_m2 ? ` pour ${permit.surface_m2} m²` : ''
+    const date    = permit.date_autorisation ? ` le ${permit.date_autorisation}` : ''
+    const score   = scoreFromPermit(permit)
+
+    // Use the email already stored by the batch enrichment (api/prospect enrich_leads action)
+    // if available; otherwise fall back to the real-time API lookup or the slug fallback.
+    const email =
+      (permit.email ? String(permit.email) : null) ||
+      extra.email ||
+      fallbackEmail(String(permit.nom_petitionnaire || ''))
+
+    results.push({
+      company:          extra.company      || String(permit.nom_petitionnaire || 'Entreprise'),
+      type:             extra.type         || String(permit.type_travaux || 'Construction'),
+      address:          extra.address      || '',
+      city:             extra.city         || String(permit.commune || ''),
+      email,
+      contact_name:     extra.contact_name || undefined,
+      contact_role:     extra.contact_role || 'Dirigeant',
+      opportunity:      `Permis de construire accordé${date}${surface}`,
+      renovation_score: score,
+      priority:         score >= 75,
+    } as Partial<Lead>)
+  }
+  return results
+}
+
+// ── PROSPECTION: SITADEL → RECHERCHE ENTREPRISES ─────────────────
 export async function searchLeads(params: {
   zone: string
   targetType: string
@@ -22,37 +124,39 @@ export async function searchLeads(params: {
   filters: string[]
 }): Promise<Partial<Lead>[]> {
 
-  const res = await fetch(ANTHROPIC_API, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 4000,
-      system: `Tu es un expert en prospection BTP français. Tu génères des leads réalistes pour des artisans.
-Réponds UNIQUEMENT avec un tableau JSON valide (sans markdown) avec cette structure exacte :
-[{"company":"Nom Entreprise","type":"Type","city":"Ville","address":"Adresse complète","contact_name":"Prénom Nom","contact_role":"Directeur","email":"contact@entreprise.fr","phone":"01 23 45 67 89","renovation_score":85,"opportunity":"Description de l'opportunité de rénovation","priority":true}]
-- renovation_score : entier entre 40 et 98
-- priority : true si score >= 75
-- Noms, villes et adresses cohérents avec la région française demandée`,
-      messages: [{
-        role: 'user',
-        content: `Génère exactement ${params.maxResults} leads de type "${params.targetType}" dans la zone "${params.zone}".${params.filters.length > 0 ? `\nFiltres actifs : ${params.filters.join(', ')}.` : ''}`,
-      }],
-    }),
-  })
+  const codePostal = extractCodePostal(params.zone)
+  const commune    = extractCommune(params.zone)
 
-  if (!res.ok) throw new Error(`Erreur API ${res.status} — vérifie la clé ANTHROPIC_API_KEY sur Vercel`)
-  const data = await res.json()
-  const text: string = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') ?? ''
+  let permits: Record<string, unknown>[] = []
 
-  try {
-    const match = text.match(/\[[\s\S]*\]/)
-    const leads = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
-    return Array.isArray(leads) ? leads : []
-  } catch {
-    console.error('[searchLeads] Impossible de parser la réponse IA :', text)
-    return []
+  // Step 1 — query by code_postal
+  if (codePostal) {
+    const { data } = await supabase
+      .from('permis_construire')
+      .select('*')
+      .eq('code_postal', codePostal)
+      .order('date_autorisation', { ascending: false })
+      .limit(params.maxResults * 2)
+    if (data?.length) permits = data
   }
+
+  // Step 2 — supplement with commune ilike if still not enough results
+  if (permits.length < params.maxResults && commune) {
+    const existing = new Set(permits.map((p: any) => p.id))
+    const { data } = await supabase
+      .from('permis_construire')
+      .select('*')
+      .ilike('commune', `%${commune}%`)
+      .order('date_autorisation', { ascending: false })
+      .limit(params.maxResults * 2)
+    if (data) permits = [...permits, ...data.filter((p: any) => !existing.has(p.id))]
+  }
+
+  // No real data found — return empty rather than inventing leads
+  if (permits.length === 0) return []
+
+  // Step 3 — enrich with recherche-entreprises API (real-time, sequential)
+  return enrichSequential(permits.slice(0, params.maxResults), codePostal ?? '')
 }
 
 // ── EMAIL IA ────────────────────────────────────────────────────

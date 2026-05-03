@@ -1,5 +1,112 @@
 import { createClient } from '@supabase/supabase-js'
 
+// ── EMAIL ENRICHMENT HELPERS ──────────────────────────────────────
+
+function extractMairieEmail(nom) {
+  const m = nom.match(/^(?:COMMUNE|MAIRIE)\s+DE\s+(.+)$/i)
+  if (!m) return null
+  const commune = m[1].trim().toLowerCase().replace(/\s+/g, '')
+  return `mairie@${commune}.fr`
+}
+
+const COMPANY_PATTERN = /\b(SCI|SARL|SAS|SA|HABITAT|OFFICE)\b/i
+
+async function lookupCompanyEmail(nom) {
+  try {
+    const url = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(nom)}&limit=1`
+    const r = await fetch(url, { headers: { 'User-Agent': 'LeadRenov/1.0' } })
+    if (!r.ok) return null
+    const json = await r.json()
+    const site = json.results?.[0]?.siege?.site_internet
+    if (!site) return null
+    const href = site.startsWith('http') ? site : `https://${site}`
+    const hostname = new URL(href).hostname.replace(/^www\./, '')
+    return `contact@${hostname}`
+  } catch {
+    return null
+  }
+}
+
+async function generateEmailWithAI(nom, apiKey) {
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 60,
+        messages: [{
+          role: 'user',
+          content: `Génère l'email de contact professionnel le plus probable pour "${nom}" (entreprise ou personne française). Réponds UNIQUEMENT avec l'adresse email, sans texte supplémentaire.`,
+        }],
+      }),
+    })
+    if (!r.ok) return null
+    const json = await r.json()
+    return json.content?.[0]?.text?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+async function deriveEmail(nom, apiKey) {
+  // 1. Commune / Mairie
+  const mairieEmail = extractMairieEmail(nom)
+  if (mairieEmail) return mairieEmail
+
+  // 2. Société (SCI, SARL, SAS, SA, HABITAT, OFFICE) → API d'entreprises
+  if (COMPANY_PATTERN.test(nom)) {
+    const companyEmail = await lookupCompanyEmail(nom)
+    if (companyEmail) return companyEmail
+    // If no site found, fall through to AI
+  }
+
+  // 3. Fallback: IA génère un email probable
+  return generateEmailWithAI(nom, apiKey)
+}
+
+async function handleEnrichLeads(res, supabase, apiKey) {
+  const BATCH = 50
+
+  const { data: leads, error } = await supabase
+    .from('permis_construire')
+    .select('id, nom_petitionnaire')
+    .not('nom_petitionnaire', 'is', null)
+    .is('email', null)
+    .limit(BATCH)
+
+  if (error) {
+    console.error('[enrich_leads] Query error:', error.message)
+    return res.status(500).json({ error: error.message })
+  }
+
+  let enriched = 0
+  for (const lead of leads) {
+    const email = await deriveEmail(lead.nom_petitionnaire, apiKey)
+    if (!email) continue
+
+    const { error: updateError } = await supabase
+      .from('permis_construire')
+      .update({ email })
+      .eq('id', lead.id)
+
+    if (updateError) {
+      console.error('[enrich_leads] Update error for id', lead.id, updateError.message)
+    } else {
+      enriched++
+    }
+  }
+
+  console.log(`[enrich_leads] processed=${leads.length} enriched=${enriched}`)
+  return res.status(200).json({ success: true, processed: leads.length, enriched })
+}
+
+// ── MAIN HANDLER ─────────────────────────────────────────────────
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
@@ -22,6 +129,12 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Configuration serveur manquante : clé API introuvable.' })
   }
 
+  // ── Email enrichment for permis_construire leads ──────────────
+  if (req.body?.action === 'enrich_leads') {
+    return handleEnrichLeads(res, supabase, apiKey)
+  }
+
+  // ── Existing: Claude API proxy (unchanged) ────────────────────
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

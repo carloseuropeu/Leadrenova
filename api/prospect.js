@@ -175,26 +175,35 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  // Validate Supabase session token
-  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '')
-  if (!token) return res.status(401).json({ error: 'Unauthorized' })
+  const bearer = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '')
+
+  // ── CRON path: enrich_leads uses CRON_SECRET, no Supabase session ──
+  if (req.body?.action === 'enrich_leads') {
+    const cronSecret = process.env.CRON_SECRET
+    if (!cronSecret || bearer !== cronSecret) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+    const supabase = createClient(
+      process.env.SUPABASE_URL             || process.env.VITE_SUPABASE_URL      || '',
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY      || '',
+    )
+    return handleEnrichLeads(res, supabase, process.env.ANTHROPIC_API_KEY || '')
+  }
+
+  // ── Standard path: Claude proxy uses Supabase session token ──────
+  if (!bearer) return res.status(401).json({ error: 'Unauthorized' })
 
   const supabase = createClient(
     process.env.SUPABASE_URL      || process.env.VITE_SUPABASE_URL      || '',
     process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '',
   )
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+  const { data: { user }, error: authError } = await supabase.auth.getUser(bearer)
   if (authError || !user) return res.status(401).json({ error: 'Unauthorized' })
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     console.error('[api/prospect] ANTHROPIC_API_KEY manquante dans les variables Vercel')
     return res.status(500).json({ error: 'Configuration serveur manquante : clé API introuvable.' })
-  }
-
-  // ── Email + Places enrichment for permis_construire leads ─────
-  if (req.body?.action === 'enrich_leads') {
-    return handleEnrichLeads(res, supabase, apiKey)
   }
 
   // ── Existing: Claude API proxy (unchanged) ────────────────────

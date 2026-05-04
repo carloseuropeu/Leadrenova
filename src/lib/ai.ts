@@ -93,12 +93,15 @@ async function enrichSequential(
     const date    = permit.date_autorisation ? ` le ${permit.date_autorisation}` : ''
     const score   = scoreFromPermit(permit)
 
-    // Use the email already stored by the batch enrichment (api/prospect enrich_leads action)
-    // if available; otherwise fall back to the real-time API lookup or the slug fallback.
+    // Priority: pre-enriched fields stored by enrich_leads (api/prospect.js batch action)
+    // → real-time recherche-entreprises data → local fallbacks.
     const email =
-      (permit.email ? String(permit.email) : null) ||
+      (permit.email    ? String(permit.email)    : null) ||
       extra.email ||
       fallbackEmail(String(permit.nom_petitionnaire || ''))
+
+    const phone   = (permit.phone    ? String(permit.phone)    : null) || extra.phone   || undefined
+    const website = (permit.site_web ? String(permit.site_web) : null) || undefined
 
     results.push({
       company:          extra.company      || String(permit.nom_petitionnaire || 'Entreprise'),
@@ -106,6 +109,8 @@ async function enrichSequential(
       address:          extra.address      || '',
       city:             extra.city         || String(permit.commune || ''),
       email,
+      phone,
+      website,
       contact_name:     extra.contact_name || undefined,
       contact_role:     extra.contact_role || 'Dirigeant',
       opportunity:      `Permis de construire accordé${date}${surface}`,

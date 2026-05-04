@@ -69,14 +69,57 @@ async function deriveEmail(nom, apiKey) {
   return generateEmailWithAI(nom, apiKey)
 }
 
-async function handleEnrichLeads(res, supabase, apiKey) {
-  const BATCH = 50
+// ── GOOGLE PLACES ENRICHMENT ──────────────────────────────────────
 
+async function lookupGooglePlaces(nom, commune, googleKey) {
+  if (!googleKey) return null
+  try {
+    const query = [nom, commune, 'France'].filter(Boolean).join(' ')
+    const url = new URL('https://maps.googleapis.com/maps/api/place/findplacefromtext/json')
+    url.searchParams.set('input', query)
+    url.searchParams.set('inputtype', 'textquery')
+    url.searchParams.set('fields', 'name,formatted_phone_number,website,formatted_address')
+    url.searchParams.set('key', googleKey)
+
+    const r = await fetch(url.toString())
+    if (!r.ok) return null
+    const json = await r.json()
+    if (json.status !== 'OK' || !json.candidates?.[0]) return null
+
+    const place = json.candidates[0]
+    return {
+      phone:   place.formatted_phone_number || null,
+      website: place.website               || null,
+      address: place.formatted_address     || null,
+      name:    place.name                  || null,
+    }
+  } catch {
+    return null
+  }
+}
+
+function emailFromWebsite(website) {
+  try {
+    const href = website.startsWith('http') ? website : `https://${website}`
+    const hostname = new URL(href).hostname.replace(/^www\./, '')
+    return `contact@${hostname}`
+  } catch {
+    return null
+  }
+}
+
+// ── ENRICH HANDLER ────────────────────────────────────────────────
+
+async function handleEnrichLeads(res, supabase, apiKey) {
+  const BATCH     = 50
+  const googleKey = process.env.VITE_GOOGLE_MAPS_KEY || ''
+
+  // Fetch leads that still need phone enrichment (new column), with commune for Places query
   const { data: leads, error } = await supabase
     .from('permis_construire')
-    .select('id, nom_petitionnaire')
+    .select('id, nom_petitionnaire, commune, email')
     .not('nom_petitionnaire', 'is', null)
-    .is('email', null)
+    .is('phone', null)
     .limit(BATCH)
 
   if (error) {
@@ -85,13 +128,33 @@ async function handleEnrichLeads(res, supabase, apiKey) {
   }
 
   let enriched = 0
-  for (const lead of leads) {
-    const email = await deriveEmail(lead.nom_petitionnaire, apiKey)
-    if (!email) continue
+  for (let i = 0; i < leads.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 200)) // avoid Places rate-limit
+    const lead   = leads[i]
+    const update = {}
+
+    // Step 1: Google Places → phone + website + domain email
+    const places = await lookupGooglePlaces(lead.nom_petitionnaire, lead.commune, googleKey)
+    if (places) {
+      if (places.phone)   update.phone   = places.phone
+      if (places.website) {
+        update.site_web = places.website
+        const domainEmail = emailFromWebsite(places.website)
+        if (domainEmail) update.email = domainEmail
+      }
+    }
+
+    // Step 2: If no email from Places website, derive by name (only when not already stored)
+    if (!update.email && !lead.email) {
+      const email = await deriveEmail(lead.nom_petitionnaire, apiKey)
+      if (email) update.email = email
+    }
+
+    if (Object.keys(update).length === 0) continue
 
     const { error: updateError } = await supabase
       .from('permis_construire')
-      .update({ email })
+      .update(update)
       .eq('id', lead.id)
 
     if (updateError) {
@@ -129,7 +192,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Configuration serveur manquante : clé API introuvable.' })
   }
 
-  // ── Email enrichment for permis_construire leads ──────────────
+  // ── Email + Places enrichment for permis_construire leads ─────
   if (req.body?.action === 'enrich_leads') {
     return handleEnrichLeads(res, supabase, apiKey)
   }

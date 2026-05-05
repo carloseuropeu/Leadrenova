@@ -175,11 +175,20 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const bearer = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '')
+  // Strip "Bearer " prefix and any surrounding whitespace from the token.
+  const bearer = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim()
+
+  // Parse body defensively: Vercel auto-parses JSON when Content-Type is set,
+  // but a raw terminal call without Content-Type may leave req.body as a string or undefined.
+  let parsedBody = req.body
+  if (typeof parsedBody === 'string') {
+    try { parsedBody = JSON.parse(parsedBody) } catch { parsedBody = {} }
+  }
+  parsedBody = parsedBody || {}
 
   // ── CRON path: enrich_leads uses CRON_SECRET, no Supabase session ──
-  if (req.body?.action === 'enrich_leads') {
-    const cronSecret = process.env.CRON_SECRET
+  if (parsedBody.action === 'enrich_leads') {
+    const cronSecret = (process.env.CRON_SECRET || '').trim()
     if (!cronSecret || bearer !== cronSecret) {
       return res.status(401).json({ error: 'Unauthorized' })
     }

@@ -188,13 +188,22 @@ export default async function handler(req, res) {
 
   // ── CRON path: enrich_leads uses CRON_SECRET, no Supabase session ──
   if (parsedBody.action === 'enrich_leads') {
+    const receivedBearer = (req.headers['authorization'] || '').replace('Bearer ', '').trim()
     const cronSecret = (process.env.CRON_SECRET || '').trim()
+
     if (!cronSecret) {
-      return res.status(401).json({ error: 'Unauthorized: CRON_SECRET not set on server' })
+      return res.status(500).json({ error: 'CRON_SECRET not configured' })
     }
-    if (bearer !== cronSecret) {
-      return res.status(401).json({ error: 'Unauthorized: invalid token' })
+
+    if (receivedBearer !== cronSecret) {
+      return res.status(401).json({
+        error: 'invalid token',
+        received_length: receivedBearer.length,
+        expected_length: cronSecret.length,
+        first_char_match: receivedBearer[0] === cronSecret[0],
+      })
     }
+
     const supabase = createClient(
       process.env.SUPABASE_URL             || process.env.VITE_SUPABASE_URL      || '',
       process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY      || '',

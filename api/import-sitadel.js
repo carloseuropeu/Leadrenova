@@ -88,6 +88,12 @@ export default async function handler(req, res) {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
+  // ── Optional department filter: ?departements=45,28,41 ────────
+  const deptParam  = req.query?.departements
+  const deptFilter = deptParam
+    ? new Set(deptParam.split(',').map(d => d.trim()).filter(Boolean))
+    : null
+
   // ── Optional reset: ?reset=true apaga todos os registos antes de importar
   if (req.query?.reset === 'true') {
     const { error: deleteError } = await supabase
@@ -100,23 +106,25 @@ export default async function handler(req, res) {
     console.log('[import-sitadel] Table reset — all records deleted')
   }
 
-  // ── Guard: skip if this month was already imported ─────────────
   const now         = new Date()
   const importMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-  const { count } = await supabase
-    .from('permis_construire')
-    .select('id', { count: 'exact', head: true })
-    .gte('created_at', startOfMonth)
+  // ── Guard: skip if this month was already imported (bypassed when dept filter active) ──
+  if (!deptFilter) {
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    const { count } = await supabase
+      .from('permis_construire')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', startOfMonth)
 
-  if (count && count > 0) {
-    console.log(`[import-sitadel] ${importMonth} déjà importé (${count} enregistrements)`)
-    return res.status(200).json({
-      success: true,
-      skipped: true,
-      reason: `Mois ${importMonth} déjà importé (${count} lignes)`,
-    })
+    if (count && count > 0) {
+      console.log(`[import-sitadel] ${importMonth} déjà importé (${count} enregistrements)`)
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        reason: `Mois ${importMonth} déjà importé (${count} lignes)`,
+      })
+    }
   }
 
   try {
@@ -161,6 +169,7 @@ export default async function handler(req, res) {
     let batch      = []
     let inserted   = 0
     let skipped    = 0
+    let filtered   = 0
     let lineCount  = 0
     let truncated  = false
 
@@ -205,6 +214,8 @@ export default async function handler(req, res) {
       const record = buildRecord(cols, col)
       if (!record) { skipped++; return }
 
+      if (deptFilter && !deptFilter.has(record.departement)) { filtered++; return }
+
       batch.push(record)
       if (batch.length >= BATCH_SIZE) await flushBatch()
     }
@@ -219,7 +230,7 @@ export default async function handler(req, res) {
       buffer = lines.pop() ?? ''
 
       for (const line of lines) {
-        if (lineCount >= MAX_LINES) {
+        if (!deptFilter && lineCount >= MAX_LINES) {
           truncated = true
           await reader.cancel()
           streamDone = true
@@ -230,15 +241,16 @@ export default async function handler(req, res) {
     }
 
     // Process final buffered fragment
-    if (buffer.trim() && !truncated && headerDone && lineCount < MAX_LINES) {
+    if (buffer.trim() && !truncated && headerDone && (deptFilter || lineCount < MAX_LINES)) {
       await processLine(buffer)
     }
 
     await flushBatch()
 
-    console.log(`[import-sitadel] ${importMonth} — inserted: ${inserted}, skipped: ${skipped}, lines: ${lineCount}, truncated: ${truncated}`)
+    console.log(`[import-sitadel] ${importMonth} — inserted: ${inserted}, skipped: ${skipped}, filtered: ${filtered}, lines: ${lineCount}, truncated: ${truncated}`)
     return res.status(200).json({
-      success: true, inserted, skipped, lines: lineCount, truncated, month: importMonth,
+      success: true, inserted, skipped, filtered, lines: lineCount, truncated, month: importMonth,
+      ...(deptFilter ? { departements: [...deptFilter] } : {}),
     })
 
   } catch (err) {

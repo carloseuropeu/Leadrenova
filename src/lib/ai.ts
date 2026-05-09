@@ -127,33 +127,41 @@ export async function searchLeads(params: {
   targetType: string
   maxResults: number
   filters: string[]
+  recentOnly?: boolean
 }): Promise<Partial<Lead>[]> {
 
   const codePostal = extractCodePostal(params.zone)
   const commune    = extractCommune(params.zone)
+  const cutoff     = params.recentOnly
+    ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    : null
 
   let permits: Record<string, unknown>[] = []
 
   // Step 1 — query by code_postal
   if (codePostal) {
-    const { data } = await supabase
+    let q = supabase
       .from('permis_construire')
       .select('*')
       .eq('code_postal', codePostal)
       .order('date_autorisation', { ascending: false })
       .limit(params.maxResults * 2)
+    if (cutoff) q = q.gte('date_autorisation', cutoff)
+    const { data } = await q
     if (data?.length) permits = data
   }
 
   // Step 2 — supplement with commune ilike if still not enough results
   if (permits.length < params.maxResults && commune) {
     const existing = new Set(permits.map((p: any) => p.id))
-    const { data } = await supabase
+    let q = supabase
       .from('permis_construire')
       .select('*')
       .ilike('commune', `%${commune}%`)
       .order('date_autorisation', { ascending: false })
       .limit(params.maxResults * 2)
+    if (cutoff) q = q.gte('date_autorisation', cutoff)
+    const { data } = await q
     if (data) permits = [...permits, ...data.filter((p: any) => !existing.has(p.id))]
   }
 

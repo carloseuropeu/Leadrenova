@@ -215,7 +215,7 @@ function LeadCard({
   onRevealEmail,
   onEmailIA,
 }: {
-  lead: Partial<Lead> & { _revealed?: boolean }
+  lead: Partial<Lead> & { _revealed?: boolean; _recent?: boolean }
   onRevealEmail: () => void
   onEmailIA: () => void
 }) {
@@ -238,6 +238,11 @@ function LeadCard({
             {lead.priority && (
               <span className="text-[9px] font-mono font-bold text-green bg-gdim border border-green/20 rounded-full px-1.5 py-0.5">
                 PRIORITÉ
+              </span>
+            )}
+            {lead._recent && (
+              <span className="text-[9px] font-mono font-bold text-green bg-gdim border border-green/20 rounded-full px-1.5 py-0.5">
+                RÉCENT 🔥
               </span>
             )}
           </div>
@@ -309,7 +314,7 @@ function LeadCard({
 }
 
 // ── Main screen ──────────────────────────────────────────────────
-type SearchLead = Partial<Lead> & { _revealed?: boolean; _tmpId: string }
+type SearchLead = Partial<Lead> & { _revealed?: boolean; _recent?: boolean; _tmpId: string }
 
 export default function Prospecter() {
   const { profile, updateProfile } = useAuthStore()
@@ -320,6 +325,7 @@ export default function Prospecter() {
   const [targetType, setTargetType] = useState(TARGET_TYPES[0])
   const [maxResults, setMaxResults] = useState(5)
   const [activeFilters, setActiveFilters] = useState<string[]>([])
+  const [recentOnly, setRecentOnly] = useState(false)
   const [showTargetMenu, setShowTargetMenu] = useState(false)
 
   const [results, setResults]   = useState<SearchLead[]>([])
@@ -353,6 +359,7 @@ export default function Prospecter() {
         targetType,
         maxResults,
         filters: activeFilters,
+        recentOnly,
       })
 
       console.log('[Prospecter] Leads reçus de l\'API :', leads.length, leads)
@@ -366,6 +373,7 @@ export default function Prospecter() {
         status: 'nouveau' as const,
         _tmpId: `tmp_${i}_${Date.now()}`,
         _revealed: false,
+        _recent: recentOnly,
       }))
 
       console.log('[Prospecter] Enriched leads prêts pour affichage :', enriched.length)
@@ -548,6 +556,26 @@ export default function Prospecter() {
           </button>
         ))}
       </div>
+
+      {/* Recent-only toggle */}
+      <button
+        onClick={() => setRecentOnly(v => !v)}
+        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors text-sm mb-4 ${
+          recentOnly
+            ? 'bg-gdim border-green/30 text-green'
+            : 'bg-bg2 border-border text-text2 hover:border-border2'
+        }`}
+      >
+        <span>🔥</span>
+        <span className="flex-1 text-left font-medium">Permis récents (30 derniers jours)</span>
+        <div className={`w-10 h-5 rounded-full border transition-colors relative flex-shrink-0 ${
+          recentOnly ? 'bg-green/20 border-green/40' : 'bg-bg3 border-border'
+        }`}>
+          <div className={`absolute top-0.5 w-4 h-4 rounded-full transition-transform ${
+            recentOnly ? 'bg-green translate-x-5' : 'bg-text3 translate-x-0.5'
+          }`} />
+        </div>
+      </button>
 
       {/* Error */}
       {error && (

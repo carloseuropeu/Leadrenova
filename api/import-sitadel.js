@@ -31,15 +31,6 @@ function parseCsvLine(line, sep) {
   return result
 }
 
-function findCol(headers, candidates) {
-  const lower = headers.map(h => h.toLowerCase().trim().replace(/["\r]/g, ''))
-  for (const c of candidates) {
-    const idx = lower.indexOf(c.toLowerCase())
-    if (idx !== -1) return idx
-  }
-  return -1
-}
-
 function buildColMap(headers) {
   const h = headers.map(x => x.trim().toLowerCase())
   return {
@@ -81,7 +72,11 @@ function buildRecord(cols, col) {
 // ── MAIN HANDLER ─────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  // Auth desactivada temporariamente para testes
+  const secret   = req.headers['authorization']?.replace('Bearer ', '').trim()
+  const expected = process.env.CRON_SECRET?.trim()
+  if (!expected || secret !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY

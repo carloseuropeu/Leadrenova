@@ -50,6 +50,8 @@ function buildColMap(headers) {
     surface_m2:        h.indexOf('superficie_terrain'),
     nom_petitionnaire: h.indexOf('denom_dem'),
     date_autorisation: h.indexOf('date_reelle_autorisation'),
+    adr_num_ter:       h.indexOf('adr_num_ter'),
+    adr_libvoie_ter:   h.indexOf('adr_libvoie_ter'),
   }
 }
 
@@ -70,6 +72,8 @@ function buildRecord(cols, col) {
     surface_m2:        col.surface_m2        >= 0 ? parseFloat(cols[col.surface_m2]) || null : null,
     nom_petitionnaire: col.nom_petitionnaire >= 0 ? cols[col.nom_petitionnaire] || null : null,
     date_autorisation: col.date_autorisation >= 0 ? cols[col.date_autorisation] || null : null,
+    adr_num_ter:       col.adr_num_ter       >= 0 ? cols[col.adr_num_ter]       || null : null,
+    adr_libvoie_ter:   col.adr_libvoie_ter   >= 0 ? cols[col.adr_libvoie_ter]   || null : null,
   }
 }
 

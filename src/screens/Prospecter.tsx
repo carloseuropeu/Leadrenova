@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Search, Download, Mail, Eye, EyeOff, ChevronDown,
-  Loader2, CheckCircle, AlertCircle, Zap
+  Loader2, CheckCircle, AlertCircle, Zap, MapPin
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { usePlan } from '@/hooks/usePlan'
@@ -256,6 +256,14 @@ function LeadCard({
         <p className="text-xs text-text2 bg-bg3 border border-border rounded-lg px-3 py-2 mb-3 leading-relaxed">
           {lead.opportunity}
         </p>
+      )}
+
+      {/* Work address */}
+      {lead.adresse_travaux && (
+        <div className="flex items-center gap-2 mb-3">
+          <MapPin size={12} className="text-green flex-shrink-0" />
+          <span className="text-xs text-text2">{lead.adresse_travaux}</span>
+        </div>
       )}
 
       {/* Details row */}

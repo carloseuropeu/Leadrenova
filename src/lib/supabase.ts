@@ -77,6 +77,7 @@ export interface Lead {
   photos: string[]
   created_at: string
   updated_at: string
+  adresse_travaux?: string | null
 }
 
 export interface GeneratedEmail {

@@ -93,6 +93,10 @@ async function enrichSequential(
     const date    = permit.date_autorisation ? ` le ${permit.date_autorisation}` : ''
     const score   = scoreFromPermit(permit)
 
+    const streetPart     = [permit.adr_num_ter, permit.adr_libvoie_ter].map(v => v ? String(v).trim() : '').filter(Boolean).join(' ')
+    const cityPart       = [permit.code_postal, permit.commune].map(v => v ? String(v).trim() : '').filter(Boolean).join(' ')
+    const adresse_travaux = [streetPart, cityPart].filter(Boolean).join(', ') || null
+
     // Priority: pre-enriched fields stored by enrich_leads (api/prospect.js batch action)
     // → real-time recherche-entreprises data → local fallbacks.
     const email =
@@ -116,6 +120,7 @@ async function enrichSequential(
       opportunity:      `Permis de construire accordé${date}${surface}`,
       renovation_score: score,
       priority:         score >= 75,
+      adresse_travaux,
     } as Partial<Lead>)
   }
   return results

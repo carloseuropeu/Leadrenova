@@ -240,47 +240,69 @@ export async function generateDevis(
   montant_ttc: number
   notes: string | null
 }> {
-  const res = await fetch(ANTHROPIC_API, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 2000,
-      system: `Tu es un expert en chiffrage BTP français. Génère un devis détaillé basé sur les notes de visite.
-Chaque ligne doit avoir une description précise, une quantité réaliste, une unité standard (m², ml, u, forfait, heure) et un prix unitaire HT en euros cohérent avec le marché français.
-Réponds UNIQUEMENT en JSON valide sans markdown :
-{"lignes":[{"description":"Dépose ancien carrelage","quantite":25,"unite":"m²","prix_unitaire_ht":8.50},{"description":"Fourniture et pose carrelage 60x60","quantite":25,"unite":"m²","prix_unitaire_ht":45.00}],"notes_techniques":"Prévoir protection des sols existants. Délai estimé : 3 jours."}`,
-      messages: [{
-        role: 'user',
-        content: `Entreprise : ${lead.company ?? 'Client'}\nVille : ${lead.city ?? ''}\nNotes de visite : ${visitNotes}`,
-      }],
-    }),
-  })
+  // AbortController ensures the spinner always stops even if the server
+  // closes the connection mid-stream (Vercel function timeout edge case).
+  const controller = new AbortController()
+  const timeoutId  = setTimeout(() => controller.abort(), 50_000)
 
-  if (!res.ok) throw new Error(`API error ${res.status}`)
-  const data = await res.json()
-  const text: string = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') ?? ''
-
-  let raw: { lignes: { description: string; quantite: number; unite: string; prix_unitaire_ht: number }[]; notes_techniques?: string }
   try {
-    const match = text.match(/\{[\s\S]*"lignes"[\s\S]*\}/)
-    raw = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
-  } catch {
-    return { lignes: [], montant_ht: 0, montant_tva: 0, montant_ttc: 0, notes: null }
+    const res = await fetch(ANTHROPIC_API, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: await authHeaders(),
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 2000,
+        system: `Tu es un expert en chiffrage BTP français. Génère un devis professionnel structuré.
+Chaque ligne DOIT avoir les champs : section (exactement l'une de : "Main d'oeuvre", "Matériaux", "Fournitures", "Déplacements"), description précise, quantite réaliste, unite standard (m², ml, u, forfait, h), prix_unitaire_ht en euros HT cohérent avec le marché français 2025.
+Produis au minimum 8 lignes réparties sur au moins 2 sections différentes.
+Réponds UNIQUEMENT en JSON valide sans markdown ni commentaire :
+{"lignes":[{"section":"Main d'oeuvre","description":"Dépose revêtement sol","quantite":30,"unite":"m²","prix_unitaire_ht":8.50},{"section":"Matériaux","description":"Carrelage grès cérame 60x60","quantite":30,"unite":"m²","prix_unitaire_ht":38.00}],"notes_techniques":"Évacuation gravats incluse. Délai estimé : 5 jours."}`,
+        messages: [{
+          role: 'user',
+          content: [
+            `Chantier : ${lead.company ?? 'Client'}`,
+            `Localisation : ${(lead as any).adresse_travaux ?? lead.city ?? ''}`,
+            `Type de travaux : ${lead.type ?? 'Rénovation'}`,
+            `Contexte permis : ${lead.opportunity ?? ''}`,
+            `Notes de visite : ${visitNotes || 'Rénovation générale'}`,
+            `TVA applicable : ${tvaRate} %`,
+          ].filter(Boolean).join('\n'),
+        }],
+      }),
+    })
+
+    if (!res.ok) throw new Error(`API error ${res.status}`)
+    const data = await res.json()
+    const text: string = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') ?? ''
+
+    let raw: {
+      lignes: { section?: string; description: string; quantite: number; unite: string; prix_unitaire_ht: number }[]
+      notes_techniques?: string
+    }
+    try {
+      const match = text.match(/\{[\s\S]*"lignes"[\s\S]*\}/)
+      raw = JSON.parse(match ? match[0] : text.replace(/```json|```/g, '').trim())
+    } catch {
+      return { lignes: [], montant_ht: 0, montant_tva: 0, montant_ttc: 0, notes: null }
+    }
+
+    const lignes: LigneDevis[] = (raw.lignes ?? []).map((l, i) => ({
+      id:               String(i + 1),
+      description:      l.description      ?? '',
+      quantite:         Number(l.quantite)  || 0,
+      unite:            l.unite             ?? 'u',
+      prix_unitaire_ht: Number(l.prix_unitaire_ht) || 0,
+      total_ht:         Math.round(Number(l.quantite) * Number(l.prix_unitaire_ht) * 100) / 100,
+      section:          l.section?.trim() || undefined,
+    }))
+
+    const montant_ht  = Math.round(lignes.reduce((s, l) => s + l.total_ht, 0) * 100) / 100
+    const montant_tva = Math.round(montant_ht * tvaRate / 100 * 100) / 100
+    const montant_ttc = Math.round((montant_ht + montant_tva) * 100) / 100
+
+    return { lignes, montant_ht, montant_tva, montant_ttc, notes: raw.notes_techniques ?? null }
+  } finally {
+    clearTimeout(timeoutId)
   }
-
-  const lignes: LigneDevis[] = (raw.lignes ?? []).map((l, i) => ({
-    id:               String(i + 1),
-    description:      l.description      ?? '',
-    quantite:         Number(l.quantite)  || 0,
-    unite:            l.unite             ?? 'u',
-    prix_unitaire_ht: Number(l.prix_unitaire_ht) || 0,
-    total_ht:         Math.round(Number(l.quantite) * Number(l.prix_unitaire_ht) * 100) / 100,
-  }))
-
-  const montant_ht  = Math.round(lignes.reduce((s, l) => s + l.total_ht, 0) * 100) / 100
-  const montant_tva = Math.round(montant_ht * tvaRate / 100 * 100) / 100
-  const montant_ttc = Math.round((montant_ht + montant_tva) * 100) / 100
-
-  return { lignes, montant_ht, montant_tva, montant_ttc, notes: raw.notes_techniques ?? null }
 }

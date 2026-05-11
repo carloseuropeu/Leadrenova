@@ -1,5 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
+// Vercel Pro: 60 s execution budget (default is 30 s, not enough for long AI responses).
+export const config = { maxDuration: 60 }
+
 // ── EMAIL ENRICHMENT HELPERS ──────────────────────────────────────
 
 function extractMairieEmail(nom) {

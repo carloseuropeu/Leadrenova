@@ -96,6 +96,7 @@ export interface LigneDevis {
   unite: string
   prix_unitaire_ht: number
   total_ht: number
+  section?: string
 }
 
 export type DevisStatut = 'brouillon' | 'envoye' | 'accepte' | 'refuse'

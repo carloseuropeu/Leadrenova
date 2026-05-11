@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, FileText, Loader2, Zap, Download, X, Trash2, Check,
@@ -205,7 +205,11 @@ function NewDevisModal({ leads, devisList, onClose, onCreated }: {
               </div>
               <div className="space-y-2">
                 {lignes.map((l, i) => (
-                  <div key={l.id} className="bg-bg3 border border-border rounded-xl p-3 space-y-2">
+                  <Fragment key={l.id}>
+                    {l.section && l.section !== lignes[i - 1]?.section && (
+                      <p className="text-[10px] font-mono font-bold text-green uppercase tracking-widest mt-3 mb-1 px-1">{l.section}</p>
+                    )}
+                  <div className="bg-bg3 border border-border rounded-xl p-3 space-y-2">
                     <div className="flex items-start gap-2">
                       <input
                         value={l.description}
@@ -239,6 +243,7 @@ function NewDevisModal({ leads, devisList, onClose, onCreated }: {
                       <div className="flex items-center justify-center font-mono text-green">{eur(l.total_ht)}</div>
                     </div>
                   </div>
+                  </Fragment>
                 ))}
               </div>
 
@@ -252,6 +257,10 @@ function NewDevisModal({ leads, devisList, onClose, onCreated }: {
                 </div>
                 <div className="flex justify-between text-sm font-bold text-text border-t border-border pt-1.5">
                   <span>TOTAL TTC</span><span className="font-mono text-green">{eur(montant_ttc)}</span>
+                </div>
+                <div className="flex justify-between text-xs text-amber border-t border-border/50 pt-1.5 mt-0.5">
+                  <span>Acompte demandé (30 %)</span>
+                  <span className="font-mono">{eur(Math.round(montant_ttc * 0.3 * 100) / 100)}</span>
                 </div>
               </div>
             </div>

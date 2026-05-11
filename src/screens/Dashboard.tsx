@@ -18,7 +18,7 @@ function MonthlyChart({ months }: { months: { label: string; value: number }[] }
   const H      = 56
   const W      = months.length * (BAR_W + GAP) - GAP
   return (
-    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" height={80} preserveAspectRatio="none">
       {months.map((m, i) => {
         const barH = m.value > 0 ? Math.max((m.value / max) * H, 4) : 3
         const x    = i * (BAR_W + GAP)

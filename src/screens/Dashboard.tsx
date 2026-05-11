@@ -11,7 +11,13 @@ import { supabase } from '@/lib/supabase'
 import type { Lead, LeadStatus, Devis, Facture } from '@/lib/supabase'
 
 // ── SVG bar chart (no dependency) ────────────────────────────────
-function MonthlyChart({ months }: { months: { label: string; value: number }[] }) {
+function MonthlyChart({
+  months,
+  onBarClick,
+}: {
+  months: { label: string; value: number; key: string }[]
+  onBarClick?: (key: string) => void
+}) {
   const max    = Math.max(...months.map(m => m.value), 1)
   const BAR_W  = 28
   const GAP    = 6
@@ -23,10 +29,12 @@ function MonthlyChart({ months }: { months: { label: string; value: number }[] }
         const barH = m.value > 0 ? Math.max((m.value / max) * H, 4) : 3
         const x    = i * (BAR_W + GAP)
         return (
-          <g key={i}>
+          <g key={i} onClick={() => onBarClick?.(m.key)}
+            style={{ cursor: onBarClick ? 'pointer' : 'default' }}>
             <rect x={x} y={H - barH} width={BAR_W} height={barH} rx={3}
               fill={m.value > 0 ? '#4ade80' : '#1e2e1e'} />
-            <text x={x + BAR_W / 2} y={H + 13} textAnchor="middle" fontSize="7.5" fill="#7a917a">
+            <text x={x + BAR_W / 2} y={H + 13} textAnchor="middle"
+              style={{ fontSize: '10px' }} fill="#7a917a">
               {m.label}
             </text>
           </g>
@@ -146,7 +154,8 @@ export default function Dashboard() {
         return pd.getFullYear() === d.getFullYear() && pd.getMonth() === d.getMonth()
       })
       .reduce((s, f) => s + f.montant_ttc, 0)
-    return { label: d.toLocaleDateString('fr-FR', { month: 'short' }), value }
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return { label: d.toLocaleDateString('fr-FR', { month: 'short' }), value, key }
   })
 
   const eur = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' €'
@@ -302,7 +311,7 @@ export default function Dashboard() {
             {/* Bar chart */}
             <div className="bg-bg2 border border-border rounded-xl p-4">
               <p className="text-[11px] font-mono text-text3 uppercase tracking-wide mb-3">CA mensuel encaissé</p>
-              <MonthlyChart months={chartMonths} />
+              <MonthlyChart months={chartMonths} onBarClick={key => navigate(`/factures?mois=${key}`)} />
             </div>
           </div>
         </LockedFeature>

@@ -48,7 +48,9 @@ function NewDevisModal({ leads, devisList, onClose, onCreated }: {
   const [montant_ttc,    setTtc]           = useState(0)
   const [genLoading,     setGenLoading]    = useState(false)
   const [saving,         setSaving]        = useState(false)
+  const [saved,          setSaved]         = useState(false)
   const [aiError,        setAiError]       = useState('')
+  const [saveError,      setSaveError]     = useState('')
 
   const selectedLead = leads.find(l => l.id === selectedLeadId)
 
@@ -94,26 +96,36 @@ function NewDevisModal({ leads, devisList, onClose, onCreated }: {
   const handleSave = async () => {
     if (!profile || !lignes.length) return
     setSaving(true)
-    const now = new Date().toISOString()
-    await supabase.from('devis').insert({
-      user_id: profile.id,
-      lead_id: selectedLeadId || null,
-      numero: nextNumero(devisList),
-      objet: objet || null,
-      lignes,
-      montant_ht,
-      tva_rate: tvaRate,
-      montant_tva,
-      montant_ttc,
-      statut: 'brouillon',
-      validite_jours: 30,
-      notes: visitNotes || null,
-      created_at: now,
-      updated_at: now,
-    })
-    setSaving(false)
-    onCreated()
-    onClose()
+    setSaveError('')
+    try {
+      const now = new Date().toISOString()
+      const { error } = await supabase.from('devis').insert({
+        user_id: profile.id,
+        lead_id: selectedLeadId || null,
+        numero: nextNumero(devisList),
+        objet: objet || null,
+        lignes,
+        montant_ht,
+        tva_rate: tvaRate,
+        montant_tva,
+        montant_ttc,
+        statut: 'brouillon',
+        validite_jours: 30,
+        notes: visitNotes || null,
+        created_at: now,
+        updated_at: now,
+      })
+      if (error) {
+        setSaveError(error.message)
+      } else {
+        setSaved(true)
+        onCreated()
+      }
+    } catch (e: any) {
+      setSaveError(e.message ?? 'Erreur lors de l\'enregistrement')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -274,15 +286,35 @@ function NewDevisModal({ leads, devisList, onClose, onCreated }: {
           )}
         </div>
 
-        <div className="p-5 border-t border-border">
-          <button
-            onClick={handleSave}
-            disabled={saving || lignes.length === 0}
-            className="w-full bg-green text-bg font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-green2 transition-colors disabled:opacity-40"
-          >
-            {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-            Enregistrer le devis
-          </button>
+        <div className="p-5 border-t border-border space-y-2">
+          {saved ? (
+            <>
+              <div className="flex items-center gap-2 bg-gdim border border-green/30 rounded-xl px-4 py-3">
+                <Check size={15} className="text-green flex-shrink-0" />
+                <p className="text-sm font-semibold text-green">Devis enregistré avec succès !</p>
+              </div>
+              <button
+                onClick={onClose}
+                className="w-full bg-bg3 border border-border text-text2 font-bold py-3 rounded-xl text-sm hover:border-border2 transition-colors"
+              >
+                Fermer
+              </button>
+            </>
+          ) : (
+            <>
+              {saveError && (
+                <p className="text-xs text-red bg-rdim border border-red/20 rounded-lg px-3 py-2">{saveError}</p>
+              )}
+              <button
+                onClick={handleSave}
+                disabled={saving || lignes.length === 0}
+                className="w-full bg-green text-bg font-bold py-3 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-green2 transition-colors disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                Enregistrer le devis
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

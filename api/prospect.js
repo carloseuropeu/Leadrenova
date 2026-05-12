@@ -224,7 +224,10 @@ export default async function handler(req, res) {
     process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '',
   )
   const { data: { user }, error: authError } = await supabase.auth.getUser(bearer)
-  if (authError || !user) return res.status(401).json({ error: 'Unauthorized' })
+  if (authError || !user) {
+    console.error('[api/prospect] Auth failed:', authError?.message ?? 'no user')
+    return res.status(401).json({ error: 'Session expirée — déconnecte-toi et reconnecte-toi' })
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {

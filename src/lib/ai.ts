@@ -7,17 +7,15 @@ const MODEL = 'claude-sonnet-4-6'
 // ── AUTH HEADERS ─────────────────────────────────────────────────
 async function authHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  try {
-    const { data: { session } } = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('auth timeout')), 5000)),
-    ])
-    if (session?.access_token) {
-      headers['Authorization'] = `Bearer ${session.access_token}`
-    }
-  } catch {
-    // getSession hung or failed — proceed without auth, server will return 401
+  const { data: { session } } = await Promise.race([
+    supabase.auth.getSession(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)),
+  ]).catch(() => ({ data: { session: null as null } }))
+
+  if (!session?.access_token) {
+    throw new Error('Session expirée — déconnecte-toi et reconnecte-toi pour générer un devis')
   }
+  headers['Authorization'] = `Bearer ${session.access_token}`
   return headers
 }
 
@@ -279,7 +277,11 @@ Réponds UNIQUEMENT en JSON valide sans markdown ni commentaire :
       }),
     })
 
-    if (!res.ok) throw new Error(`API error ${res.status}`)
+    if (!res.ok) {
+      let msg = `Erreur serveur ${res.status}`
+      try { const b = await res.json(); if (b.error) msg = b.error } catch {}
+      throw new Error(msg)
+    }
     const data = await res.json()
     const text: string = data.content?.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') ?? ''
 

@@ -7,9 +7,16 @@ const MODEL = 'claude-sonnet-4-6'
 // ── AUTH HEADERS ─────────────────────────────────────────────────
 async function authHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const { data: { session } } = await supabase.auth.getSession()
-  if (session?.access_token) {
-    headers['Authorization'] = `Bearer ${session.access_token}`
+  try {
+    const { data: { session } } = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('auth timeout')), 5000)),
+    ])
+    if (session?.access_token) {
+      headers['Authorization'] = `Bearer ${session.access_token}`
+    }
+  } catch {
+    // getSession hung or failed — proceed without auth, server will return 401
   }
   return headers
 }

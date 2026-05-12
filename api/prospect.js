@@ -233,9 +233,12 @@ export default async function handler(req, res) {
   }
 
   // ── Existing: Claude API proxy (unchanged) ────────────────────
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), 25000)
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: abort.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -255,7 +258,10 @@ export default async function handler(req, res) {
 
     return res.status(200).json(data)
   } catch (error) {
-    console.error('[api/prospect] Exception réseau :', error.message)
-    return res.status(500).json({ error: error.message })
+    const msg = error.name === 'AbortError' ? 'Anthropic API timeout (>25s)' : error.message
+    console.error('[api/prospect] Exception réseau :', msg)
+    return res.status(504).json({ error: msg })
+  } finally {
+    clearTimeout(timer)
   }
 }

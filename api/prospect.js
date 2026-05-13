@@ -237,7 +237,7 @@ export default async function handler(req, res) {
 
   // ── Existing: Claude API proxy (unchanged) ────────────────────
   const abort = new AbortController()
-  const timer = setTimeout(() => abort.abort(), 25000)
+  const timer = setTimeout(() => abort.abort(), 50000)
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
